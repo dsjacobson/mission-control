@@ -9,9 +9,9 @@ import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Switch } from "../components/ui/switch";
 import { toast } from "sonner";
+import GscConnect from "../components/GscConnect";
 
 const FIELDS = [
-  { key: "gsc_connected", label: "Google Search Console", type: "switch", hint: "OAuth required (placeholder — wire up later)" },
   { key: "ga_connected", label: "Google Analytics", type: "switch", hint: "OAuth required (placeholder — wire up later)" },
   { key: "semrush_api_key", label: "Semrush API key", type: "password" },
   { key: "dataforseo_login", label: "DataForSEO login", type: "text" },
@@ -72,12 +72,15 @@ export default function Integrations() {
         </Button>
       </PageHeader>
 
-      <Section title="Connectors" testId="integrations-section">
+      <Section title="Google Search Console" description="Live OAuth — agents ground keyword research in your real GSC data when connected." testId="gsc-section">
+        <GscConnect clientId={clientId} />
+      </Section>
+
+      <Section title="Other connectors" testId="integrations-section">
         <div className="rounded-sm border border-amber-400/20 bg-amber-400/5 p-3 mb-4 flex items-start gap-3">
           <ShieldAlert size={14} className="text-amber-400 mt-0.5" />
           <div className="text-xs text-amber-300/90 leading-relaxed">
-            MVP mode: connectors are UI-ready. The agents currently reason from the client profile + your prompts.
-            Provide keys here when you're ready to wire real data pulls — backend routes are already namespaced per client.
+            MVP mode: these connectors are UI-ready stubs. Provide keys when you're ready to wire real data pulls.
           </div>
         </div>
 

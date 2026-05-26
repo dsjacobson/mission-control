@@ -8,7 +8,9 @@ from typing import List, Optional
 
 from dotenv import load_dotenv
 from fastapi import APIRouter, FastAPI, HTTPException, Query
+from fastapi.responses import RedirectResponse
 from motor.motor_asyncio import AsyncIOMotorClient
+from pydantic import BaseModel
 from starlette.middleware.cors import CORSMiddleware
 
 from models import (
@@ -26,6 +28,7 @@ from models import (
     now_iso,
 )
 from workflow import launch_workflow_task
+import gsc
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -214,6 +217,136 @@ async def decide_approval(approval_id: str, decision: ApprovalDecision):
     if result.matched_count == 0:
         raise HTTPException(404, "Approval not found")
     return await db.approvals.find_one({"id": approval_id}, {"_id": 0})
+
+
+# ============ GSC Integration ============
+
+@api.get("/integrations/gsc/connect")
+async def gsc_connect(client_id: str = Query(...)):
+    if not gsc.is_configured():
+        raise HTTPException(500, "GSC OAuth not configured on server")
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0, "id": 1})
+    if not client:
+        raise HTTPException(404, "Client not found")
+    state = gsc.build_state(client_id)
+    url = gsc.build_authorization_url(state)
+    return RedirectResponse(url=url, status_code=302)
+
+
+@api.get("/integrations/gsc/callback")
+async def gsc_callback(
+    code: Optional[str] = Query(None),
+    state: Optional[str] = Query(None),
+    error: Optional[str] = Query(None),
+):
+    frontend = os.environ.get("FRONTEND_BASE_URL", "")
+    if error or not code or not state:
+        reason = error or "missing_code_or_state"
+        return RedirectResponse(url=f"{frontend}/?gsc_error={reason}", status_code=303)
+    try:
+        state_data = gsc.parse_state(state)
+        client_id = state_data["client_id"]
+    except Exception:
+        return RedirectResponse(url=f"{frontend}/?gsc_error=invalid_state", status_code=303)
+
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0, "id": 1})
+    if not client:
+        return RedirectResponse(url=f"{frontend}/?gsc_error=client_not_found", status_code=303)
+
+    try:
+        token_data = await gsc.exchange_code_for_tokens(code)
+    except Exception:
+        logger.exception("GSC token exchange failed")
+        return RedirectResponse(url=f"{frontend}/clients/{client_id}/integrations?gsc=error&reason=exchange_failed", status_code=303)
+
+    access_token = token_data.get("access_token")
+    refresh_token = token_data.get("refresh_token")
+    if not access_token or not refresh_token:
+        return RedirectResponse(
+            url=f"{frontend}/clients/{client_id}/integrations?gsc=error&reason=missing_refresh_token",
+            status_code=303,
+        )
+
+    google_email = await gsc.fetch_google_email(access_token)
+    expiry_iso = gsc._expiry_from_expires_in(token_data.get("expires_in"))
+    await gsc.save_gsc_tokens(
+        db=db,
+        client_id=client_id,
+        access_token=access_token,
+        refresh_token=refresh_token,
+        expiry_iso=expiry_iso,
+        scope=token_data.get("scope", ""),
+        token_type=token_data.get("token_type", "Bearer"),
+        google_email=google_email,
+    )
+    return RedirectResponse(
+        url=f"{frontend}/clients/{client_id}/integrations?gsc=connected",
+        status_code=303,
+    )
+
+
+@api.get("/clients/{client_id}/integrations/gsc/status")
+async def gsc_status(client_id: str):
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0, "id": 1})
+    if not client:
+        raise HTTPException(404, "Client not found")
+    state = await gsc.get_gsc_state(db, client_id) or {}
+    cache = state.get("performance_cache") or {}
+    return {
+        "connected": bool(state.get("connected")),
+        "configured": gsc.is_configured(),
+        "google_email": state.get("google_email"),
+        "selected_site_url": state.get("selected_site_url"),
+        "last_refreshed_at": state.get("last_refreshed_at"),
+        "has_cache": bool(cache),
+        "totals": cache.get("totals"),
+    }
+
+
+@api.get("/clients/{client_id}/integrations/gsc/sites")
+async def gsc_sites(client_id: str):
+    try:
+        access_token, _ = await gsc.ensure_valid_access_token(db, client_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    try:
+        sites = await gsc.list_sites(access_token)
+    except Exception:
+        logger.exception("GSC list sites failed")
+        raise HTTPException(502, "Failed to list GSC sites")
+    return {"sites": sites}
+
+
+class SelectSiteRequest(BaseModel):
+    site_url: str
+
+
+@api.post("/clients/{client_id}/integrations/gsc/select-site")
+async def gsc_select_site(client_id: str, payload: SelectSiteRequest):
+    await gsc.set_selected_site(db, client_id, payload.site_url)
+    return {"ok": True, "selected_site_url": payload.site_url}
+
+
+@api.post("/clients/{client_id}/integrations/gsc/refresh")
+async def gsc_refresh(client_id: str):
+    state = await gsc.get_gsc_state(db, client_id) or {}
+    site_url = state.get("selected_site_url")
+    if not site_url:
+        raise HTTPException(400, "No GSC site selected. Pick a site first.")
+    try:
+        cache = await gsc.pull_28d_performance(db, client_id, site_url)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception:
+        logger.exception("GSC refresh failed")
+        raise HTTPException(502, "Failed to pull GSC data")
+    return {"ok": True, "totals": cache.get("totals"), "refreshed_at": cache.get("refreshed_at")}
+
+
+@api.post("/clients/{client_id}/integrations/gsc/disconnect")
+async def gsc_disconnect(client_id: str):
+    await gsc.disconnect(db, client_id)
+    return {"ok": True}
 
 
 # ============ Dashboard summary ============

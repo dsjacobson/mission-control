@@ -23,6 +23,19 @@ export const api = {
   updateIntegrations: (clientId, payload) =>
     client.put(`/clients/${clientId}/integrations`, payload).then((r) => r.data),
 
+  // GSC
+  gscStatus: (clientId) =>
+    client.get(`/clients/${clientId}/integrations/gsc/status`).then((r) => r.data),
+  gscSites: (clientId) =>
+    client.get(`/clients/${clientId}/integrations/gsc/sites`).then((r) => r.data),
+  gscSelectSite: (clientId, site_url) =>
+    client.post(`/clients/${clientId}/integrations/gsc/select-site`, { site_url }).then((r) => r.data),
+  gscRefresh: (clientId) =>
+    client.post(`/clients/${clientId}/integrations/gsc/refresh`).then((r) => r.data),
+  gscDisconnect: (clientId) =>
+    client.post(`/clients/${clientId}/integrations/gsc/disconnect`).then((r) => r.data),
+  gscConnectUrl: (clientId) => `${API}/integrations/gsc/connect?client_id=${encodeURIComponent(clientId)}`,
+
   // Runs
   createRun: (payload) => client.post("/runs", payload).then((r) => r.data),
   listRuns: (clientId) =>

@@ -49,8 +49,7 @@ only), Screaming Frog MCP.
 ## What's Been Implemented (2026-02-XX)
 - Multi-client workspace CRUD + cascade delete of runs/approvals.
 - Competitor management per client.
-- Per-client integration settings (UI-ready stubs for GSC, GA, Semrush, DataForSEO,
-  WordPress, Screaming Frog MCP).
+- Per-client integration settings.
 - 4 AI workflows running end-to-end with GPT-5.2:
   keyword_research, technical_audit, competitor_analysis, strategy_sprint.
 - Coordinator agent plans subtasks before specialists run.
@@ -59,7 +58,18 @@ only), Screaming Frog MCP.
 - Approval queue (pending / approved / rejected) with approve/reject + decision notes.
 - Run history (audit trail across all workspaces).
 - Dashboard overview with live counters.
-- 100% backend test pass (25/25, including all 4 AI workflows).
+- 100% backend test pass (25/25). 100% frontend test pass (15/15).
+
+### 2026-02-XX — GSC OAuth integration (real)
+- `backend/gsc.py` — full OAuth 2.0 flow (authorization code), per-client token storage with Fernet
+  encryption at rest, automatic access-token refresh via stored refresh_token.
+- New endpoints: `GET /api/integrations/gsc/connect`, `GET /api/integrations/gsc/callback`,
+  `GET /api/clients/{id}/integrations/gsc/status|sites`, `POST .../select-site|refresh|disconnect`.
+- Scope: `webmasters.readonly` + `userinfo.email` (least privilege).
+- 28-day data pull (sliced by query + page, with 3-day GSC lag) cached on the client document.
+- Keyword Research agent prompt now grounds analysis in real GSC top queries/pages when present.
+- Frontend: `GscConnect` component on the Integrations page (Connect → site picker → Refresh data).
+- Env vars added: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI, FRONTEND_BASE_URL, FERNET_KEY.
 
 ## Backlog
 ### P0 — next session

@@ -11,6 +11,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from models import AgentLog, Approval, now_iso, new_id
 import agents
+import gsc
 
 
 AGENT_FOR_TYPE = {
@@ -113,7 +114,24 @@ async def run_workflow(db: AsyncIOMotorDatabase, run_id: str) -> None:
         await _log(db, run_id, agent_key, f"{agents.AGENT_LABELS[agent_key]} engaged", "info")
 
         if rtype == "keyword_research":
-            results = await agents.keyword_research(run_id, client, objective)
+            gsc_context = None
+            try:
+                cache = await gsc.get_performance_cache(db, client["id"])
+                if cache and (cache.get("by_query") or cache.get("by_page")):
+                    top_queries = (cache.get("by_query") or [])[:40]
+                    top_pages = (cache.get("by_page") or [])[:15]
+                    lines = [f"Site: {cache.get('site_url')} · range: {cache.get('start_date')} to {cache.get('end_date')}"]
+                    lines.append("Top queries (query | clicks | impressions | ctr% | position):")
+                    for q in top_queries:
+                        lines.append(f"  - {q['key']} | {q['clicks']} | {q['impressions']} | {q['ctr']} | {q['position']}")
+                    lines.append("Top pages (page | clicks | impressions | ctr% | position):")
+                    for p in top_pages:
+                        lines.append(f"  - {p['key']} | {p['clicks']} | {p['impressions']} | {p['ctr']} | {p['position']}")
+                    gsc_context = "\n".join(lines)
+                    await _log(db, run_id, "keyword", f"Grounded with GSC data · {len(top_queries)} queries, {len(top_pages)} pages", "info")
+            except Exception as e:
+                await _log(db, run_id, "keyword", f"GSC context unavailable: {e}", "warning")
+            results = await agents.keyword_research(run_id, client, objective, gsc_context=gsc_context)
         elif rtype == "technical_audit":
             results = await agents.technical_audit(run_id, client, objective)
         elif rtype == "competitor_analysis":

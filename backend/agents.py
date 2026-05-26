@@ -138,13 +138,14 @@ Return strict JSON:
 
 # ---------- Keyword Research ----------
 
-async def keyword_research(run_id: str, client: Dict[str, Any], objective: str) -> Dict[str, Any]:
+async def keyword_research(run_id: str, client: Dict[str, Any], objective: str, gsc_context: Optional[str] = None) -> Dict[str, Any]:
+    gsc_block = f"\n\nReal GSC performance data (last 28 days):\n{gsc_context}\n" if gsc_context else ""
     prompt = f"""Generate keyword research for:
 - Domain: {client.get('domain')}
 - Industry: {client.get('industry') or 'unspecified'}
 - Goals: {client.get('goals') or 'general SEO growth'}
 - Markets: {', '.join(client.get('target_markets') or []) or 'global English'}
-- Objective: {objective or 'discover opportunities'}
+- Objective: {objective or 'discover opportunities'}{gsc_block}
 
 Return strict JSON with this exact shape:
 {{
@@ -163,7 +164,8 @@ Return strict JSON with this exact shape:
     {{ "title": "string", "primary_keyword": "string", "outline": ["H2", "H2", "H2"] }}
   ]
 }}
-Provide 3-5 clusters, 4-8 keywords per cluster, 2-3 draft briefs."""
+Provide 3-5 clusters, 4-8 keywords per cluster, 2-3 draft briefs.
+If GSC data is provided above, prioritize "quick_wins" using actual queries that rank in positions 4-20 with non-zero impressions, and ground "content_gaps" in pages with high impressions but low CTR."""
     raw = await _run_agent("keyword", run_id, prompt)
     return _safe_parse_json(raw, fallback={"clusters": [], "quick_wins": [], "content_gaps": [], "draft_briefs": []})
 
