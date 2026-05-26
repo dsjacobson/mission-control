@@ -10,6 +10,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/tabs"
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -146,6 +147,9 @@ export default function Approvals() {
                   {KIND_LABEL[selected.kind]} · {selected.client_name}
                 </div>
                 <DialogTitle className="font-heading text-zinc-50">{selected.title}</DialogTitle>
+                <DialogDescription className="sr-only">
+                  Review approval content and approve or reject it.
+                </DialogDescription>
               </DialogHeader>
               <div className="max-h-[55vh] overflow-y-auto pr-1">
                 <pre
