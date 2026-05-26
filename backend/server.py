@@ -349,6 +349,24 @@ async def gsc_disconnect(client_id: str):
     return {"ok": True}
 
 
+# ============ Semrush + DataForSEO ============
+
+@api.get("/integrations/semrush/status")
+async def semrush_status():
+    import semrush as _sem
+    if not _sem.is_configured():
+        return {"configured": False, "ok": False}
+    return {"configured": True, **await _sem.test_connection()}
+
+
+@api.get("/integrations/dataforseo/status")
+async def dataforseo_status():
+    import dataforseo as _dfs
+    if not _dfs.is_configured():
+        return {"configured": False, "ok": False}
+    return {"configured": True, **await _dfs.test_connection()}
+
+
 # ============ Dashboard summary ============
 
 @api.get("/dashboard/summary")

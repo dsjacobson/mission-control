@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { Plug, ShieldAlert } from "lucide-react";
+import { Plug, ShieldAlert, BarChart3, Database } from "lucide-react";
 import api from "../lib/api";
 import { PageHeader, Section } from "../components/Bits";
 import { useClients } from "../lib/ClientContext";
@@ -10,12 +10,10 @@ import { Label } from "../components/ui/label";
 import { Switch } from "../components/ui/switch";
 import { toast } from "sonner";
 import GscConnect from "../components/GscConnect";
+import IntegrationStatusCard from "../components/IntegrationStatusCard";
 
 const FIELDS = [
   { key: "ga_connected", label: "Google Analytics", type: "switch", hint: "OAuth required (placeholder — wire up later)" },
-  { key: "semrush_api_key", label: "Semrush API key", type: "password" },
-  { key: "dataforseo_login", label: "DataForSEO login", type: "text" },
-  { key: "dataforseo_password", label: "DataForSEO password", type: "password" },
   { key: "wordpress_url", label: "WordPress site URL", type: "text", hint: "Drafts only" },
   { key: "wordpress_user", label: "WordPress username", type: "text" },
   { key: "wordpress_app_password", label: "WordPress app password", type: "password" },
@@ -74,6 +72,27 @@ export default function Integrations() {
 
       <Section title="Google Search Console" description="Live OAuth — agents ground keyword research in your real GSC data when connected." testId="gsc-section">
         <GscConnect clientId={clientId} />
+      </Section>
+
+      <Section title="SEO data providers" description="Server-wide connections used by every client workspace." testId="seo-data-section">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <IntegrationStatusCard
+            testId="semrush-status"
+            icon={BarChart3}
+            title="Semrush"
+            subtitle="MCP server · feeds Competitor Analysis + Keyword Research agents"
+            statusPath="semrush"
+            hint="Used for: domain organic keywords, top competitors, batch keyword metrics."
+          />
+          <IntegrationStatusCard
+            testId="dataforseo-status"
+            icon={Database}
+            title="DataForSEO"
+            subtitle="Labs API · keyword difficulty + keyword gap analysis"
+            statusPath="dataforseo"
+            hint="Used for: bulk keyword difficulty scoring + per-competitor keyword gap analysis."
+          />
+        </div>
       </Section>
 
       <Section title="Other connectors" testId="integrations-section">

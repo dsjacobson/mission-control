@@ -36,6 +36,9 @@ export const api = {
     client.post(`/clients/${clientId}/integrations/gsc/disconnect`).then((r) => r.data),
   gscConnectUrl: (clientId) => `${API}/integrations/gsc/connect?client_id=${encodeURIComponent(clientId)}`,
 
+  // Global integration status (semrush, dataforseo)
+  integrationStatus: (key) => client.get(`/integrations/${key}/status`).then((r) => r.data),
+
   // Runs
   createRun: (payload) => client.post("/runs", payload).then((r) => r.data),
   listRuns: (clientId) =>

@@ -60,6 +60,23 @@ only), Screaming Frog MCP.
 - Dashboard overview with live counters.
 - 100% backend test pass (25/25). 100% frontend test pass (15/15).
 
+### 2026-02-XX — Semrush MCP + DataForSEO integrations
+- `backend/semrush.py` — minimal Semrush MCP HTTP/JSON-RPC client (no full MCP SDK).
+  Supports `tools/list`, `tools/call`, plus helpers: `domain_competitors`,
+  `domain_organic_keywords`, `phrase_batch_metrics`, `execute_report`. Parses CSV responses.
+- `backend/dataforseo.py` — async REST client (Basic Auth via httpx). Wraps
+  `bulk_keyword_difficulty/live`, `competitors_domain/live`, `domain_intersection/live`
+  (intersections=false for keyword gaps), `ranked_keywords/live`.
+- New endpoints: `GET /api/integrations/{semrush,dataforseo}/status`.
+- **Competitor Analysis agent**: grounded with Semrush top-10 organic competitors +
+  DataForSEO keyword gaps per tracked competitor.
+- **Keyword Research agent**: enriched with Semrush organic keywords for client domain
+  + DataForSEO bulk keyword difficulty scores on AI-proposed clusters.
+- Frontend: `IntegrationStatusCard` component with connection state + sample tools.
+- Env vars added: SEMRUSH_API_KEY, SEMRUSH_MCP_ENDPOINT, DATAFORSEO_LOGIN, DATAFORSEO_PASSWORD.
+- Verified: full competitor_analysis run on `cookingitalians.com` produced grounded
+  results citing real keyword gaps (tiramisu, gnocchi) vs giallozafferano.com.
+
 ### 2026-02-XX — GSC OAuth integration (real)
 - `backend/gsc.py` — full OAuth 2.0 flow (authorization code), per-client token storage with Fernet
   encryption at rest, automatic access-token refresh via stored refresh_token.

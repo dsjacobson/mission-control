@@ -12,6 +12,8 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from models import AgentLog, Approval, now_iso, new_id
 import agents
 import gsc
+import semrush
+import dataforseo
 
 
 AGENT_FOR_TYPE = {
@@ -131,11 +133,84 @@ async def run_workflow(db: AsyncIOMotorDatabase, run_id: str) -> None:
                     await _log(db, run_id, "keyword", f"Grounded with GSC data · {len(top_queries)} queries, {len(top_pages)} pages", "info")
             except Exception as e:
                 await _log(db, run_id, "keyword", f"GSC context unavailable: {e}", "warning")
+
+            # Semrush organic keywords for the client domain
+            try:
+                if semrush.is_configured() and client.get("domain"):
+                    sem_kws = await semrush.domain_organic_keywords(client["domain"], "us", limit=25)
+                    if sem_kws:
+                        block = ["Semrush organic keywords (top 25 — Keyword | Position | Search Volume | CPC | URL):"]
+                        for k in sem_kws[:25]:
+                            block.append(f"  - {k.get('Keyword')} | {k.get('Position')} | {k.get('Search Volume')} | {k.get('CPC')} | {k.get('Url')}")
+                        gsc_context = (gsc_context or "") + "\n\n" + "\n".join(block)
+                        await _log(db, run_id, "keyword", f"Grounded with Semrush · {len(sem_kws)} ranked keywords", "info")
+            except Exception as e:
+                await _log(db, run_id, "keyword", f"Semrush unavailable: {e}", "warning")
+
             results = await agents.keyword_research(run_id, client, objective, gsc_context=gsc_context)
+
+            # Enrich draft brief keywords with DataForSEO difficulty
+            try:
+                if dataforseo.is_configured():
+                    seeds = []
+                    for cluster in (results.get("clusters") or [])[:6]:
+                        for kw in (cluster.get("keywords") or [])[:3]:
+                            seeds.append(kw.get("keyword"))
+                    seeds = list(dict.fromkeys([s for s in seeds if s]))[:50]
+                    if seeds:
+                        diffs = await dataforseo.bulk_keyword_difficulty(seeds)
+                        diff_map = {d["keyword"]: d.get("difficulty") for d in diffs if d.get("keyword")}
+                        for cluster in results.get("clusters") or []:
+                            for kw in cluster.get("keywords") or []:
+                                d = diff_map.get(kw.get("keyword"))
+                                if d is not None:
+                                    kw["difficulty_score"] = d
+                        results["dfs_difficulty_scored"] = len([k for k in seeds if diff_map.get(k) is not None])
+                        await _log(db, run_id, "keyword", f"Enriched {len(diff_map)} keywords with DataForSEO difficulty", "success")
+            except Exception as e:
+                await _log(db, run_id, "keyword", f"DataForSEO enrichment failed: {e}", "warning")
+
         elif rtype == "technical_audit":
             results = await agents.technical_audit(run_id, client, objective)
         elif rtype == "competitor_analysis":
-            results = await agents.competitor_analysis(run_id, client, objective)
+            comp_context = None
+            try:
+                if semrush.is_configured() and client.get("domain"):
+                    sem_comps = await semrush.domain_competitors(client["domain"], "us", limit=10)
+                    if sem_comps:
+                        block = ["Semrush top organic competitors (Domain | Competitor Relevance | Common Keywords | Organic Traffic):"]
+                        for c in sem_comps[:10]:
+                            block.append(f"  - {c.get('Domain')} | {c.get('Competitor Relevance')} | {c.get('Common Keywords')} | {c.get('Organic Traffic')}")
+                        comp_context = "\n".join(block)
+                        await _log(db, run_id, "competitor", f"Grounded with Semrush · {len(sem_comps)} competitors", "info")
+            except Exception as e:
+                await _log(db, run_id, "competitor", f"Semrush unavailable: {e}", "warning")
+
+            # DataForSEO keyword gaps for each user-tracked competitor
+            try:
+                if dataforseo.is_configured() and client.get("domain") and client.get("competitors"):
+                    gap_blocks = []
+                    for comp in (client.get("competitors") or [])[:3]:
+                        comp_domain = comp.get("domain")
+                        if not comp_domain:
+                            continue
+                        gaps = await dataforseo.domain_intersection_gaps(
+                            stronger_domain=comp_domain,
+                            weaker_domain=client["domain"],
+                            limit=15,
+                        )
+                        if gaps:
+                            lines = [f"Keyword gaps · {comp_domain} ranks, {client['domain']} does not (Keyword | Search Volume | CPC):"]
+                            for g in gaps[:15]:
+                                lines.append(f"  - {g.get('keyword')} | {g.get('search_volume')} | {g.get('cpc')}")
+                            gap_blocks.append("\n".join(lines))
+                    if gap_blocks:
+                        comp_context = (comp_context or "") + "\n\n" + "\n\n".join(gap_blocks)
+                        await _log(db, run_id, "competitor", f"Grounded with DataForSEO keyword gaps · {len(gap_blocks)} competitors", "success")
+            except Exception as e:
+                await _log(db, run_id, "competitor", f"DataForSEO gap data unavailable: {e}", "warning")
+
+            results = await agents.competitor_analysis(run_id, client, objective, seo_context=comp_context)
         elif rtype == "strategy_sprint":
             results = await agents.strategy_synthesis(run_id, client, objective)
         else:

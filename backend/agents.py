@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
 from emergentintegrations.llm.chat import LlmChat, UserMessage
@@ -202,7 +202,7 @@ Provide 8-12 issues across categories, sorted by priority then impact descending
 
 # ---------- Competitor Analysis ----------
 
-async def competitor_analysis(run_id: str, client: Dict[str, Any], objective: str) -> Dict[str, Any]:
+async def competitor_analysis(run_id: str, client: Dict[str, Any], objective: str, seo_context: Optional[str] = None) -> Dict[str, Any]:
     competitors = client.get("competitors", [])
     if not competitors:
         return {
@@ -213,6 +213,7 @@ async def competitor_analysis(run_id: str, client: Dict[str, Any], objective: st
             "strategic_moves": [],
         }
     comp_lines = "\n".join(f"- {c.get('name')} ({c.get('domain')})" for c in competitors)
+    seo_block = f"\n\nReal SEO data:\n{seo_context}\n" if seo_context else ""
     prompt = f"""Compare client against competitors.
 
 Client:
@@ -224,7 +225,7 @@ Client:
 Competitors:
 {comp_lines}
 
-Objective: {objective or 'identify gaps and opportunities'}
+Objective: {objective or 'identify gaps and opportunities'}{seo_block}
 
 Return strict JSON:
 {{
