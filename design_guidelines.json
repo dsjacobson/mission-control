@@ -1,0 +1,100 @@
+{
+  "project_name": "Autonomous SEO Agency Operator",
+  "theme": "dark",
+  "archetype": "Archetype 4: Swiss & High-Contrast (Dark Command Center Variant)",
+  "vibe": "Professional command center, trading terminal, SOC dashboard. Powerful, calm, highly structured, data-dense.",
+  "colors": {
+    "background_app": "bg-zinc-950",
+    "background_surface": "bg-zinc-900",
+    "background_surface_hover": "hover:bg-zinc-800/80",
+    "border_default": "border-zinc-800",
+    "border_focus": "focus:border-zinc-600 focus:ring-1 focus:ring-zinc-600",
+    "text_primary": "text-zinc-50",
+    "text_secondary": "text-zinc-400",
+    "text_muted": "text-zinc-600",
+    "brand_primary": "bg-white text-zinc-950 hover:bg-zinc-200",
+    "status_working": "text-emerald-400 bg-emerald-400/10 border border-emerald-400/20",
+    "status_pending": "text-amber-400 bg-amber-400/10 border border-amber-400/20",
+    "status_error_reject": "text-rose-400 bg-rose-400/10 border border-rose-400/20",
+    "status_info_neutral": "text-sky-400 bg-sky-400/10 border border-sky-400/20",
+    "forbidden_colors": ["purple", "violet", "teal-green", "teal-blue", "#1B93A4", "generic gradients"]
+  },
+  "typography": {
+    "heading_font": "Outfit",
+    "body_font": "IBM Plex Sans",
+    "mono_font": "JetBrains Mono",
+    "forbidden_fonts": ["Inter", "Roboto", "Open Sans", "Space Grotesk"],
+    "hierarchy": {
+      "h1": "text-3xl font-semibold tracking-tight text-zinc-50",
+      "h2": "text-xl font-medium tracking-tight text-zinc-100",
+      "h3": "text-lg font-medium text-zinc-200",
+      "body": "text-sm text-zinc-300 leading-relaxed",
+      "small": "text-xs text-zinc-400",
+      "mono_label": "text-[10px] font-mono tracking-wider uppercase text-zinc-500",
+      "logs": "text-xs font-mono text-zinc-400 leading-relaxed"
+    }
+  },
+  "layout_and_spacing": {
+    "philosophy": "High-density 'Control Room' grid layout. Zero wasted space, strict alignment.",
+    "app_shell": "Left Sidebar (16rem, collapsible) + Main Content Area + Right Live Activity Panel (20rem).",
+    "spacing_scale": "Dense. p-3 or p-4 inside cards, gap-4 between grid items.",
+    "borders_and_radii": "Use rounded-sm (2px) everywhere. No large rounded corners. Hard 1px borders on all containers (border-zinc-800).",
+    "shadows": "Minimal to none. Rely on borders and background tints for depth, not shadows."
+  },
+  "components": {
+    "buttons": "Flat design. Primary is white on black (bg-white text-zinc-950). Secondary is transparent with border (border-zinc-800 hover:bg-zinc-800 text-zinc-300).",
+    "cards_and_panels": "bg-zinc-950 or bg-zinc-900 with 1px border-zinc-800. No heavy glassmorphism, just solid dark surfaces.",
+    "tables": "Dense rows, text-sm. Sticky headers with bg-zinc-900. Subtle border-b on rows (border-zinc-800/50).",
+    "badges": "Pill-shaped, text-xs font-mono. Use status colors defined in color section.",
+    "navigation": "Client-first navigation in left sidebar. Avatar + Name at top, followed by modules (Workflows, Results, Settings)."
+  },
+  "motion_and_interactions": {
+    "hover_states": "Fast and snappy. 150ms ease-in-out transitions. Always specify hover text color.",
+    "live_activity": "Use a subtle pulsing dot (animate-pulse) next to active agents. Logs should smoothly auto-scroll.",
+    "workflows": "For active 'Strategy Sprints' or 'Audits', apply the 'Tracing Beam' effect (a subtle moving gradient border or active glow) to signify processing."
+  },
+  "media_and_assets": {
+    "icon_library": "@phosphor-icons/react (Command: yarn add @phosphor-icons/react) - Use Duotone or Regular weights for a technical look.",
+    "images": [
+      {
+        "category": "background_texture",
+        "url": "https://static.prod-images.emergentagent.com/jobs/b8962d5b-0401-4518-b1df-74e136914485/images/226401985242bfdc767c938745d80e2a4d31fb40f584312e65d37269bffc39a9.png",
+        "description": "Dark cinematic abstract texture for empty states, login screens, or subtle app backgrounds."
+      },
+      {
+        "category": "ai_agent_status_icon",
+        "url": "https://static.prod-images.emergentagent.com/jobs/b8962d5b-0401-4518-b1df-74e136914485/images/90d1462bf6425611725199c8dd528f9b3091b960b3201ee11bc75fca0134fac8.png",
+        "description": "Moody fiber optic node symbolizing AI connection and live data processing."
+      },
+      {
+        "category": "client_avatar_1",
+        "url": "https://images.unsplash.com/photo-1494790108377-be9c29b29330?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1OTV8MHwxfHNlYXJjaHwxfHxwcm9mZXNzaW9uYWwlMjBjb3Jwb3JhdGUlMjBoZWFkc2hvdCUyMHBvcnRyYWl0fGVufDB8fHx8MTc3OTgyNjM2OHww&ixlib=rb-4.1.0&q=85",
+        "description": "Client profile headshot placeholder 1."
+      },
+      {
+        "category": "client_avatar_2",
+        "url": "https://images.unsplash.com/photo-1600878459138-e1123b37cb30?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1OTV8MHwxfHNlYXJjaHw0fHxwcm9mZXNzaW9uYWwlMjBjb3Jwb3JhdGUlMjBoZWFkc2hvdCUyMHBvcnRyYWl0fGVufDB8fHx8MTc3OTgyNjM2OHww&ixlib=rb-4.1.0&q=85",
+        "description": "Client profile headshot placeholder 2."
+      },
+      {
+        "category": "client_company_logo",
+        "url": "https://images.unsplash.com/photo-1661362290679-c7da7ff5ee5b?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2NzB8MHwxfHNlYXJjaHwxfHxhYnN0cmFjdCUyMHRlY2glMjBjb21wYW55JTIwbG9nbyUyMHdoaXRlJTIwYmFja2dyb3VuZHxlbnwwfHx8fDE3Nzk4MjYzNjh8MA&ixlib=rb-4.1.0&q=85",
+        "description": "Client domain/company abstract logo placeholder."
+      }
+    ],
+    "rules": "NEVER use placeholder services (via.placeholder.com). Use the provided image URLs exclusively."
+  },
+  "testing_and_accessibility": {
+    "data_testid": "MANDATORY. Every interactive element (button, link, form input, menu item) MUST include a kebab-case data-testid attribute describing its role.",
+    "contrast": "Ensure all text meets minimum WCAG AA contrast against zinc backgrounds."
+  },
+  "instructions_to_main_agent": [
+    "Build a pure dark-mode Command Center application. Do not invert a light theme.",
+    "Implement the 'Control Room' grid with three distinct vertical areas: Navigation sidebar, Main Action area, and Right-side Live Activity/Log feed.",
+    "Use raw Tailwind HTML for layout framing to avoid strict Shadcn container limits, but use customized Shadcn components for all inputs, dialogs, and tables.",
+    "Fonts: Use Outfit for headings, IBM Plex Sans for body, and JetBrains Mono for logs/system data.",
+    "Emphasize the 'Approval-first' experience by making pending tasks highly visible with amber accents.",
+    "All containers must have explicit borders (border-zinc-800) and sharp or very slightly rounded corners (rounded-sm) to maintain a technical, serious vibe.",
+    "Do NOT add decorative gradients. The UI must feel like a precision tool."
+  ]
+}
