@@ -60,6 +60,29 @@ only), Screaming Frog MCP.
 - Dashboard overview with live counters.
 - 100% backend test pass (25/25). 100% frontend test pass (15/15).
 
+### 2026-02-XX — Phase 3 complete: GA OAuth + Screaming Frog + Strategy grounded
+- **Google Analytics 4 OAuth** — `backend/ga.py`. Reuses Google client_id/secret from GSC
+  setup, distinct `GA_REDIRECT_URI`, scope `analytics.readonly`. Endpoints under
+  `/api/integrations/ga/{connect,callback}` and `/api/clients/{id}/integrations/ga/{status,properties,select-property,refresh,disconnect}`.
+  28-day pull via GA Data API: totals + top landing pages + traffic sources + devices.
+  Tokens encrypted with the shared Fernet key.
+- **Screaming Frog upload** — `backend/screamingfrog.py`. Spike approach: parse SF
+  CSV exports (Issues Overview or internal_all). SF v24 has a local Node MCP server
+  that isn't reachable from a hosted backend; upload approach works today.
+  Endpoint: `POST /api/clients/{id}/integrations/screamingfrog/upload`.
+- **Strategy Agent grounded** — `workflow.py` now builds context for `strategy_sprint`
+  from GSC + GA + Semrush competitors + DataForSEO gaps + Screaming Frog summary +
+  latest completed `keyword_research`, `competitor_analysis`, `technical_audit` runs.
+- **Technical Audit Agent grounded** — pulls Screaming Frog + GA4 + GSC blocks; prompt
+  updated to anchor priorities to actual urls_affected counts and weight by traffic.
+- Verified live: strategy_sprint on cookingitalians.com → exec summary cites real GSC
+  pages (cacciucco, delizia al limone) AND real DataForSEO gap keywords (tiramisu,
+  gnocchi, rigatoni, aperol spritz). Technical audit on same client with SF upload →
+  10 grounded issues.
+- Frontend: new `GaConnect` + `ScreamingFrogUpload` components on the Integrations page.
+  Stub fields removed (GA toggle + SF endpoint + Semrush + DataForSEO removed in prior
+  iteration). New env var: `GA_REDIRECT_URI`.
+
 ### 2026-02-XX — Semrush MCP + DataForSEO integrations
 - `backend/semrush.py` — minimal Semrush MCP HTTP/JSON-RPC client (no full MCP SDK).
   Supports `tools/list`, `tools/call`, plus helpers: `domain_competitors`,

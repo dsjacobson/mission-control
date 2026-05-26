@@ -172,12 +172,20 @@ If GSC data is provided above, prioritize "quick_wins" using actual queries that
 
 # ---------- Technical Audit ----------
 
-async def technical_audit(run_id: str, client: Dict[str, Any], objective: str) -> Dict[str, Any]:
+async def technical_audit(run_id: str, client: Dict[str, Any], objective: str, sf_context: Optional[str] = None, ga_context: Optional[str] = None, gsc_context: Optional[str] = None) -> Dict[str, Any]:
+    extra_blocks = []
+    if sf_context:
+        extra_blocks.append(f"Real Screaming Frog crawl data:\n{sf_context}")
+    if ga_context:
+        extra_blocks.append(f"GA4 traffic signals (last 28 days):\n{ga_context}")
+    if gsc_context:
+        extra_blocks.append(f"GSC performance signals (last 28 days):\n{gsc_context}")
+    extra = ("\n\n" + "\n\n".join(extra_blocks)) if extra_blocks else ""
     prompt = f"""Produce a prioritized technical SEO audit checklist for:
 - Domain: {client.get('domain')}
 - Industry: {client.get('industry') or 'unspecified'}
 - Goals: {client.get('goals') or 'general SEO growth'}
-- Objective: {objective or 'identify highest impact technical issues'}
+- Objective: {objective or 'identify highest impact technical issues'}{extra}
 
 Return strict JSON with this exact shape:
 {{
@@ -195,7 +203,8 @@ Return strict JSON with this exact shape:
   ],
   "summary": "string"
 }}
-Provide 8-12 issues across categories, sorted by priority then impact descending."""
+Provide 8-12 issues across categories, sorted by priority then impact descending.
+If a real Screaming Frog crawl is provided, anchor priorities to actual urls_affected counts and discovered issue names. If GA4 or GSC signals are provided, weight impact higher for issues affecting top-traffic pages or queries."""
     raw = await _run_agent("audit", run_id, prompt)
     return _safe_parse_json(raw, fallback={"issues": [], "summary": ""})
 
@@ -251,13 +260,14 @@ Return strict JSON:
 
 # ---------- Strategy ----------
 
-async def strategy_synthesis(run_id: str, client: Dict[str, Any], objective: str, prior: Dict[str, Any] | None = None) -> Dict[str, Any]:
+async def strategy_synthesis(run_id: str, client: Dict[str, Any], objective: str, prior: Dict[str, Any] | None = None, seo_context: Optional[str] = None) -> Dict[str, Any]:
     prior_summary = ""
     if prior:
         try:
             prior_summary = json.dumps({k: prior.get(k) for k in list(prior.keys())[:4]}, indent=2)[:3000]
         except Exception:
             prior_summary = ""
+    seo_block = f"\n\nReal SEO data (use to ground every recommendation):\n{seo_context}\n" if seo_context else ""
     prompt = f"""Build a focused SEO strategy plan.
 
 Client:
@@ -270,7 +280,7 @@ Client:
 Objective: {objective or 'monthly strategy sprint'}
 
 Prior findings context (if any):
-{prior_summary or 'none'}
+{prior_summary or 'none'}{seo_block}
 
 Return strict JSON:
 {{

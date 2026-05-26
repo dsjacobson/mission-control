@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from dotenv import load_dotenv
-from fastapi import APIRouter, FastAPI, HTTPException, Query
+from fastapi import APIRouter, FastAPI, HTTPException, Query, UploadFile, File
 from fastapi.responses import RedirectResponse
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel
@@ -29,6 +29,8 @@ from models import (
 )
 from workflow import launch_workflow_task
 import gsc
+import ga
+import screamingfrog
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -346,6 +348,170 @@ async def gsc_refresh(client_id: str):
 @api.post("/clients/{client_id}/integrations/gsc/disconnect")
 async def gsc_disconnect(client_id: str):
     await gsc.disconnect(db, client_id)
+    return {"ok": True}
+
+
+# ============ GA Integration ============
+
+@api.get("/integrations/ga/connect")
+async def ga_connect(client_id: str = Query(...)):
+    if not ga.is_configured():
+        raise HTTPException(500, "GA OAuth not configured on server")
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0, "id": 1})
+    if not client:
+        raise HTTPException(404, "Client not found")
+    return RedirectResponse(url=ga.build_authorization_url(ga.build_state(client_id)), status_code=302)
+
+
+@api.get("/integrations/ga/callback")
+async def ga_callback(
+    code: Optional[str] = Query(None),
+    state: Optional[str] = Query(None),
+    error: Optional[str] = Query(None),
+):
+    frontend = os.environ.get("FRONTEND_BASE_URL", "")
+    if error or not code or not state:
+        return RedirectResponse(url=f"{frontend}/?ga_error={error or 'missing_code'}", status_code=303)
+    try:
+        client_id = ga.parse_state(state)["client_id"]
+    except Exception:
+        return RedirectResponse(url=f"{frontend}/?ga_error=invalid_state", status_code=303)
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0, "id": 1})
+    if not client:
+        return RedirectResponse(url=f"{frontend}/?ga_error=client_not_found", status_code=303)
+    try:
+        token_data = await ga.exchange_code_for_tokens(code)
+    except Exception:
+        logger.exception("GA token exchange failed")
+        return RedirectResponse(url=f"{frontend}/clients/{client_id}/integrations?ga=error&reason=exchange_failed", status_code=303)
+
+    access_token = token_data.get("access_token")
+    refresh_token = token_data.get("refresh_token")
+    if not access_token or not refresh_token:
+        return RedirectResponse(
+            url=f"{frontend}/clients/{client_id}/integrations?ga=error&reason=missing_refresh_token",
+            status_code=303,
+        )
+    google_email = await ga.fetch_google_email(access_token)
+    expiry_iso = ga._expiry_from_expires_in(token_data.get("expires_in"))
+    await ga.save_tokens(
+        db, client_id, access_token, refresh_token, expiry_iso,
+        token_data.get("scope", ""), token_data.get("token_type", "Bearer"), google_email,
+    )
+    return RedirectResponse(url=f"{frontend}/clients/{client_id}/integrations?ga=connected", status_code=303)
+
+
+@api.get("/clients/{client_id}/integrations/ga/status")
+async def ga_status(client_id: str):
+    state = await ga.get_state(db, client_id) or {}
+    cache = state.get("performance_cache") or {}
+    return {
+        "connected": bool(state.get("connected")),
+        "configured": ga.is_configured(),
+        "google_email": state.get("google_email"),
+        "selected_property_id": state.get("selected_property_id"),
+        "selected_property_name": state.get("selected_property_name"),
+        "last_refreshed_at": state.get("last_refreshed_at"),
+        "has_cache": bool(cache),
+        "totals": cache.get("totals"),
+    }
+
+
+@api.get("/clients/{client_id}/integrations/ga/properties")
+async def ga_properties(client_id: str):
+    try:
+        access_token, _ = await ga.ensure_valid_access_token(db, client_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    try:
+        props = await ga.list_properties(access_token)
+    except Exception:
+        logger.exception("GA list properties failed")
+        raise HTTPException(502, "Failed to list GA properties")
+    return {"properties": props}
+
+
+class GaSelectPropertyRequest(BaseModel):
+    property_id: str
+    property_name: str = ""
+
+
+@api.post("/clients/{client_id}/integrations/ga/select-property")
+async def ga_select_property(client_id: str, payload: GaSelectPropertyRequest):
+    await ga.set_selected_property(db, client_id, payload.property_id, payload.property_name)
+    return {"ok": True, "property_id": payload.property_id}
+
+
+@api.post("/clients/{client_id}/integrations/ga/refresh")
+async def ga_refresh(client_id: str):
+    state = await ga.get_state(db, client_id) or {}
+    pid = state.get("selected_property_id")
+    if not pid:
+        raise HTTPException(400, "No GA property selected.")
+    try:
+        cache = await ga.pull_28d_traffic(db, client_id, pid)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception:
+        logger.exception("GA refresh failed")
+        raise HTTPException(502, "Failed to pull GA data")
+    return {"ok": True, "totals": cache.get("totals"), "refreshed_at": cache.get("refreshed_at")}
+
+
+@api.post("/clients/{client_id}/integrations/ga/disconnect")
+async def ga_disconnect(client_id: str):
+    await ga.disconnect(db, client_id)
+    return {"ok": True}
+
+
+# ============ Screaming Frog ============
+
+@api.post("/clients/{client_id}/integrations/screamingfrog/upload")
+async def sf_upload(client_id: str, file: UploadFile = File(...)):
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0, "id": 1})
+    if not client:
+        raise HTTPException(404, "Client not found")
+    if not file.filename.lower().endswith(".csv"):
+        raise HTTPException(400, "Only .csv exports are supported (Issues Overview or internal_all)")
+    try:
+        raw = await file.read()
+        text = raw.decode("utf-8", errors="replace")
+    except Exception:
+        raise HTTPException(400, "Could not read uploaded file")
+    parsed = screamingfrog.parse_csv(text)
+    if parsed.get("format") == "unknown":
+        raise HTTPException(
+            400,
+            parsed.get("note") or "Unrecognised Screaming Frog export — try Issues Overview CSV.",
+        )
+    await screamingfrog.save_crawl(db, client_id, parsed, filename=file.filename)
+    return {
+        "ok": True,
+        "format": parsed.get("format"),
+        "rows": parsed.get("rows"),
+        "summary": parsed.get("summary"),
+        "issue_count": len(parsed.get("issues") or []),
+    }
+
+
+@api.get("/clients/{client_id}/integrations/screamingfrog/status")
+async def sf_status(client_id: str):
+    crawl = await screamingfrog.get_crawl(db, client_id)
+    if not crawl:
+        return {"uploaded": False}
+    return {
+        "uploaded": True,
+        "filename": crawl.get("filename"),
+        "format": crawl.get("format"),
+        "rows": crawl.get("rows"),
+        "summary": crawl.get("summary"),
+        "ingested_at": crawl.get("ingested_at"),
+    }
+
+
+@api.delete("/clients/{client_id}/integrations/screamingfrog")
+async def sf_clear(client_id: str):
+    await screamingfrog.clear_crawl(db, client_id)
     return {"ok": True}
 
 

@@ -10,14 +10,14 @@ import { Label } from "../components/ui/label";
 import { Switch } from "../components/ui/switch";
 import { toast } from "sonner";
 import GscConnect from "../components/GscConnect";
+import GaConnect from "../components/GaConnect";
+import ScreamingFrogUpload from "../components/ScreamingFrogUpload";
 import IntegrationStatusCard from "../components/IntegrationStatusCard";
 
 const FIELDS = [
-  { key: "ga_connected", label: "Google Analytics", type: "switch", hint: "OAuth required (placeholder — wire up later)" },
   { key: "wordpress_url", label: "WordPress site URL", type: "text", hint: "Drafts only" },
   { key: "wordpress_user", label: "WordPress username", type: "text" },
   { key: "wordpress_app_password", label: "WordPress app password", type: "password" },
-  { key: "screaming_frog_endpoint", label: "Screaming Frog MCP endpoint", type: "text" },
 ];
 
 export default function Integrations() {
@@ -72,6 +72,14 @@ export default function Integrations() {
 
       <Section title="Google Search Console" description="Live OAuth — agents ground keyword research in your real GSC data when connected." testId="gsc-section">
         <GscConnect clientId={clientId} />
+      </Section>
+
+      <Section title="Google Analytics 4" description="Live OAuth — Technical Audit + Strategy agents weight findings by real traffic." testId="ga-section">
+        <GaConnect clientId={clientId} />
+      </Section>
+
+      <Section title="Screaming Frog crawl" description="Upload an SEO Spider CSV export to ground the Technical Audit agent in real crawl data." testId="sf-section">
+        <ScreamingFrogUpload clientId={clientId} />
       </Section>
 
       <Section title="SEO data providers" description="Server-wide connections used by every client workspace." testId="seo-data-section">

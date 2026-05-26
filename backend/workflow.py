@@ -12,8 +12,10 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from models import AgentLog, Approval, now_iso, new_id
 import agents
 import gsc
+import ga
 import semrush
 import dataforseo
+import screamingfrog
 
 
 AGENT_FOR_TYPE = {
@@ -34,6 +36,110 @@ async def _log(db, run_id: str, agent: str, message: str, level: str = "info") -
 
 async def _set_run(db, run_id: str, **fields) -> None:
     await db.runs.update_one({"id": run_id}, {"$set": fields})
+
+
+# ---------- Context builders (reusable across workflows) ----------
+
+async def _build_gsc_block(db, client_id: str) -> str | None:
+    cache = await gsc.get_performance_cache(db, client_id)
+    if not cache or not (cache.get("by_query") or cache.get("by_page")):
+        return None
+    top_queries = (cache.get("by_query") or [])[:25]
+    top_pages = (cache.get("by_page") or [])[:10]
+    lines = [f"GSC · site={cache.get('site_url')} · {cache.get('start_date')}→{cache.get('end_date')}"]
+    lines.append("Top queries (query | clicks | impressions | ctr% | position):")
+    for q in top_queries:
+        lines.append(f"  - {q['key']} | {q['clicks']} | {q['impressions']} | {q['ctr']} | {q['position']}")
+    lines.append("Top pages (page | clicks | impressions | ctr% | position):")
+    for p in top_pages:
+        lines.append(f"  - {p['key']} | {p['clicks']} | {p['impressions']} | {p['ctr']} | {p['position']}")
+    return "\n".join(lines)
+
+
+async def _build_ga_block(db, client_id: str) -> str | None:
+    cache = await ga.get_performance_cache(db, client_id)
+    if not cache:
+        return None
+    totals = cache.get("totals") or {}
+    lines = [f"GA4 · property={cache.get('property_id')} · last 28 days"]
+    if totals:
+        lines.append(f"Totals: sessions={totals.get('sessions')} users={totals.get('totalUsers')} pageviews={totals.get('screenPageViews')} engagement={totals.get('engagementRate')}")
+    top_pages = (cache.get("top_pages") or [])[:10]
+    if top_pages:
+        lines.append("Top landing pages (page | sessions | engagement):")
+        for p in top_pages:
+            lines.append(f"  - {p.get('landingPagePlusQueryString')} | {p.get('sessions')} | {p.get('engagementRate')}")
+    by_source = (cache.get("by_source") or [])[:8]
+    if by_source:
+        lines.append("Top traffic sources (channel/source | sessions):")
+        for s in by_source:
+            lines.append(f"  - {s.get('sessionDefaultChannelGroup')}/{s.get('sessionSource')} | {s.get('sessions')}")
+    return "\n".join(lines)
+
+
+def _build_sf_block(crawl: Dict[str, Any] | None) -> str | None:
+    if not crawl:
+        return None
+    summary = crawl.get("summary") or {}
+    lines = [f"Screaming Frog crawl · format={crawl.get('format')} · rows={crawl.get('rows')}"]
+    by_priority = summary.get("by_priority")
+    if by_priority:
+        lines.append(f"Issues by priority: {by_priority}")
+    if summary.get("total_urls_affected"):
+        lines.append(f"Total URLs affected: {summary['total_urls_affected']}")
+    if summary.get("status_codes"):
+        lines.append(f"Status codes: {summary['status_codes']}")
+    issues = (crawl.get("issues") or [])[:20]
+    if issues:
+        lines.append("Top issues (name | priority | urls_affected):")
+        for it in issues:
+            lines.append(f"  - {it.get('name')} | {it.get('priority')} | {it.get('urls_affected')}")
+    return "\n".join(lines)
+
+
+async def _build_semrush_competitors_block(domain: str) -> str | None:
+    if not semrush.is_configured() or not domain:
+        return None
+    try:
+        comps = await semrush.domain_competitors(domain, "us", limit=10)
+    except Exception:
+        return None
+    if not comps:
+        return None
+    lines = ["Semrush top organic competitors (Domain | Relevance | Common Keywords | Organic Traffic):"]
+    for c in comps[:10]:
+        lines.append(f"  - {c.get('Domain')} | {c.get('Competitor Relevance')} | {c.get('Common Keywords')} | {c.get('Organic Traffic')}")
+    return "\n".join(lines)
+
+
+async def _build_dfs_gaps_block(client: Dict[str, Any]) -> str | None:
+    if not dataforseo.is_configured() or not client.get("domain") or not client.get("competitors"):
+        return None
+    blocks = []
+    for comp in (client.get("competitors") or [])[:3]:
+        comp_domain = comp.get("domain")
+        if not comp_domain:
+            continue
+        try:
+            gaps = await dataforseo.domain_intersection_gaps(comp_domain, client["domain"], limit=10)
+        except Exception:
+            continue
+        if not gaps:
+            continue
+        lines = [f"Keyword gaps · {comp_domain} ranks, {client['domain']} does not:"]
+        for g in gaps[:10]:
+            lines.append(f"  - {g.get('keyword')} | vol={g.get('search_volume')} | cpc={g.get('cpc')}")
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks) if blocks else None
+
+
+async def _latest_run_results(db, client_id: str, rtype: str) -> Dict[str, Any] | None:
+    doc = await db.runs.find_one(
+        {"client_id": client_id, "type": rtype, "status": "completed"},
+        {"_id": 0, "results": 1},
+        sort=[("completed_at", -1)],
+    )
+    return (doc or {}).get("results")
 
 
 async def _create_approvals_for_run(db, run: Dict[str, Any]) -> None:
@@ -171,7 +277,30 @@ async def run_workflow(db: AsyncIOMotorDatabase, run_id: str) -> None:
                 await _log(db, run_id, "keyword", f"DataForSEO enrichment failed: {e}", "warning")
 
         elif rtype == "technical_audit":
-            results = await agents.technical_audit(run_id, client, objective)
+            sf_block = None
+            ga_block = None
+            gsc_block_for_audit = None
+            try:
+                crawl = await screamingfrog.get_crawl(db, client["id"])
+                sf_block = _build_sf_block(crawl)
+                if sf_block:
+                    await _log(db, run_id, "audit", f"Grounded with Screaming Frog · {(crawl or {}).get('rows', 0)} rows", "info")
+            except Exception as e:
+                await _log(db, run_id, "audit", f"SF crawl unavailable: {e}", "warning")
+            try:
+                ga_block = await _build_ga_block(db, client["id"])
+                if ga_block:
+                    await _log(db, run_id, "audit", "Grounded with GA4 traffic data", "info")
+            except Exception as e:
+                await _log(db, run_id, "audit", f"GA4 unavailable: {e}", "warning")
+            try:
+                gsc_block_for_audit = await _build_gsc_block(db, client["id"])
+                if gsc_block_for_audit:
+                    await _log(db, run_id, "audit", "Grounded with GSC performance data", "info")
+            except Exception:
+                pass
+            results = await agents.technical_audit(run_id, client, objective,
+                                                   sf_context=sf_block, ga_context=ga_block, gsc_context=gsc_block_for_audit)
         elif rtype == "competitor_analysis":
             comp_context = None
             try:
@@ -212,7 +341,53 @@ async def run_workflow(db: AsyncIOMotorDatabase, run_id: str) -> None:
 
             results = await agents.competitor_analysis(run_id, client, objective, seo_context=comp_context)
         elif rtype == "strategy_sprint":
-            results = await agents.strategy_synthesis(run_id, client, objective)
+            # Build comprehensive context from every signal we have
+            blocks = []
+            try:
+                b = await _build_gsc_block(db, client["id"])
+                if b:
+                    blocks.append(b)
+            except Exception:
+                pass
+            try:
+                b = await _build_ga_block(db, client["id"])
+                if b:
+                    blocks.append(b)
+            except Exception:
+                pass
+            try:
+                b = await _build_semrush_competitors_block(client.get("domain", ""))
+                if b:
+                    blocks.append(b)
+            except Exception:
+                pass
+            try:
+                b = await _build_dfs_gaps_block(client)
+                if b:
+                    blocks.append(b)
+            except Exception:
+                pass
+            try:
+                crawl = await screamingfrog.get_crawl(db, client["id"])
+                b = _build_sf_block(crawl)
+                if b:
+                    blocks.append(b)
+            except Exception:
+                pass
+
+            # Latest completed runs (keyword + competitor + audit)
+            prior_combined: Dict[str, Any] = {}
+            for prev_type in ("keyword_research", "competitor_analysis", "technical_audit"):
+                prev = await _latest_run_results(db, client["id"], prev_type)
+                if prev:
+                    prior_combined[prev_type] = prev
+
+            seo_context = "\n\n".join(blocks) if blocks else None
+            if blocks:
+                await _log(db, run_id, "strategy", f"Grounded with {len(blocks)} live data block(s)", "info")
+            if prior_combined:
+                await _log(db, run_id, "strategy", f"Including prior findings from {len(prior_combined)} run(s)", "info")
+            results = await agents.strategy_synthesis(run_id, client, objective, prior=prior_combined or None, seo_context=seo_context)
         else:
             results = {}
 
