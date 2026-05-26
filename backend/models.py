@@ -125,6 +125,7 @@ class RunCreate(BaseModel):
 # ---------- Approvals ----------
 
 ApprovalStatus = Literal["pending", "approved", "rejected"]
+ApprovalProgress = Literal["open", "in_progress", "done", "archived"]
 ApprovalKind = Literal[
     "content_brief",
     "technical_action",
@@ -146,12 +147,20 @@ class Approval(BaseModel):
     summary: str = ""
     content: Dict[str, Any] = Field(default_factory=dict)
     status: ApprovalStatus = "pending"
+    progress: ApprovalProgress = "open"
+    progress_note: Optional[str] = ""
     created_at: str = Field(default_factory=now_iso)
     decided_at: Optional[str] = None
     decision_note: Optional[str] = None
+    progress_updated_at: Optional[str] = None
 
 
 class ApprovalDecision(BaseModel):
     status: ApprovalStatus
     note: Optional[str] = ""
     edited_content: Optional[Dict[str, Any]] = None
+
+
+class ProgressUpdate(BaseModel):
+    progress: ApprovalProgress
+    note: Optional[str] = ""

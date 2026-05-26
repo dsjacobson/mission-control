@@ -12,6 +12,7 @@ import Workflows from "@/pages/Workflows";
 import Competitors from "@/pages/Competitors";
 import Integrations from "@/pages/Integrations";
 import Approvals from "@/pages/Approvals";
+import Deliverables from "@/pages/Deliverables";
 import History from "@/pages/History";
 import RunDetails from "@/pages/RunDetails";
 
@@ -29,6 +30,7 @@ function App() {
               <Route path="/clients/:clientId/competitors" element={<Competitors />} />
               <Route path="/clients/:clientId/integrations" element={<Integrations />} />
               <Route path="/clients/:clientId/approvals" element={<Approvals />} />
+              <Route path="/clients/:clientId/deliverables" element={<Deliverables />} />
               <Route path="/approvals" element={<Approvals />} />
               <Route path="/history" element={<History />} />
               <Route path="/runs/:runId" element={<RunDetails />} />

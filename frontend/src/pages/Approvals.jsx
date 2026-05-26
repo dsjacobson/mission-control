@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
-import { useParams, Link } from "react-router-dom";
-import { Check, X, FileText } from "lucide-react";
+import { useParams, Link, useNavigate } from "react-router-dom";
+import { Check, X, FileText, ArrowRight } from "lucide-react";
 import api from "../lib/api";
 import { PageHeader, Section, EmptyState, StatusBadge, formatRelative } from "../components/Bits";
 import { useClients } from "../lib/ClientContext";
@@ -27,11 +27,13 @@ const KIND_LABEL = {
 
 export default function Approvals() {
   const { clientId } = useParams();
+  const navigate = useNavigate();
   const { activeClient, setActiveClientId, clients } = useClients();
   const [items, setItems] = useState([]);
   const [status, setStatus] = useState("pending");
   const [selected, setSelected] = useState(null);
   const [note, setNote] = useState("");
+  const [justApproved, setJustApproved] = useState(null);
 
   useEffect(() => {
     if (clientId) setActiveClientId(clientId);
@@ -56,10 +58,16 @@ export default function Approvals() {
   const decide = async (decision) => {
     if (!selected) return;
     try {
-      await api.decideApproval(selected.id, { status: decision, note });
-      toast.success(decision === "approved" ? "Approved" : "Rejected");
-      setSelected(null);
-      setNote("");
+      const updated = await api.decideApproval(selected.id, { status: decision, note });
+      if (decision === "approved") {
+        setJustApproved(updated);
+        setSelected(null);
+        setNote("");
+      } else {
+        toast.success("Rejected");
+        setSelected(null);
+        setNote("");
+      }
       fetchItems();
     } catch {
       toast.error("Failed to update");
@@ -193,6 +201,50 @@ export default function Approvals() {
                     Close
                   </Button>
                 )}
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Post-approval success modal */}
+      <Dialog open={!!justApproved} onOpenChange={(o) => !o && setJustApproved(null)}>
+        <DialogContent className="bg-zinc-950 border-zinc-800 text-zinc-100 max-w-md rounded-sm" data-testid="approved-success-dialog">
+          {justApproved && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="font-heading text-zinc-50 flex items-center gap-2">
+                  <Check size={16} className="text-emerald-400" /> Approved
+                </DialogTitle>
+                <DialogDescription className="text-zinc-400 text-sm">
+                  <span className="text-zinc-200">"{justApproved.title}"</span> is now a deliverable
+                  in <span className="text-zinc-100 font-medium">{justApproved.client_name}</span>'s backlog.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="rounded-sm border border-zinc-800 bg-zinc-900 p-3 text-xs text-zinc-400 leading-relaxed">
+                Track it through <span className="font-mono text-zinc-300">Open → In progress → Done</span>.
+                You can also download it as Markdown or copy the JSON from there.
+              </div>
+              <DialogFooter className="flex-row gap-2 sm:justify-between">
+                <Button
+                  variant="ghost"
+                  onClick={() => setJustApproved(null)}
+                  className="text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900 rounded-sm"
+                  data-testid="stay-in-queue"
+                >
+                  Stay in queue
+                </Button>
+                <Button
+                  onClick={() => {
+                    const cid = justApproved.client_id;
+                    setJustApproved(null);
+                    navigate(`/clients/${cid}/deliverables`);
+                  }}
+                  data-testid="go-to-deliverables"
+                  className="bg-zinc-50 text-zinc-950 hover:bg-zinc-200 rounded-sm"
+                >
+                  Open deliverables <ArrowRight size={14} className="ml-1.5" />
+                </Button>
               </DialogFooter>
             </>
           )}

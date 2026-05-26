@@ -53,6 +53,12 @@ export const api = {
     client.get("/approvals", { params }).then((r) => r.data),
   decideApproval: (id, decision) =>
     client.post(`/approvals/${id}/decision`, decision).then((r) => r.data),
+  updateProgress: (id, progress, note = "") =>
+    client.post(`/approvals/${id}/progress`, { progress, note }).then((r) => r.data),
+  editApprovalContent: (id, content) =>
+    client.put(`/approvals/${id}/content`, { content }).then((r) => r.data),
+  listDeliverables: (clientId) =>
+    client.get(`/clients/${clientId}/deliverables`).then((r) => r.data),
 
   // Dashboard
   dashboardSummary: () => client.get("/dashboard/summary").then((r) => r.data),

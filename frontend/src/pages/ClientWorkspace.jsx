@@ -10,6 +10,7 @@ export default function ClientWorkspace() {
   const { activeClient, setActiveClientId, refresh } = useClients();
   const [runs, setRuns] = useState([]);
   const [approvalsCount, setApprovalsCount] = useState(0);
+  const [deliverablesCount, setDeliverablesCount] = useState(0);
 
   useEffect(() => {
     setActiveClientId(clientId);
@@ -19,13 +20,15 @@ export default function ClientWorkspace() {
     let mounted = true;
     const tick = async () => {
       try {
-        const [r, ap] = await Promise.all([
+        const [r, ap, dl] = await Promise.all([
           api.listRuns(clientId),
           api.listApprovals({ client_id: clientId, status: "pending" }),
+          api.listDeliverables(clientId),
         ]);
         if (!mounted) return;
         setRuns(r);
         setApprovalsCount(ap.length);
+        setDeliverablesCount(dl?.counters?.total || 0);
       } catch {}
     };
     tick();
@@ -73,10 +76,11 @@ export default function ClientWorkspace() {
       </PageHeader>
 
       <Section title="Snapshot" testId="client-snapshot">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
           <StatTile testId="cs-active" label="Active runs" value={activeRunsCount} tone={activeRunsCount > 0 ? "success" : "neutral"} />
           <StatTile testId="cs-completed" label="Completed" value={completedRuns} />
           <StatTile testId="cs-pending" label="Pending approvals" value={approvalsCount} tone={approvalsCount > 0 ? "warning" : "neutral"} />
+          <StatTile testId="cs-deliverables" label="Deliverables" value={deliverablesCount} hint="approved, in your backlog" />
           <StatTile testId="cs-integrations" label="Integrations" value={`${integrationsConnected}/6`} hint="connectors configured" />
         </div>
       </Section>

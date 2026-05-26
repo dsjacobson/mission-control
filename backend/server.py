@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
 from dotenv import load_dotenv
 from fastapi import APIRouter, FastAPI, HTTPException, Query, UploadFile, File
@@ -22,6 +22,7 @@ from models import (
     Competitor,
     CompetitorCreate,
     IntegrationConfig,
+    ProgressUpdate,
     RunCreate,
     WorkflowRun,
     new_id,
@@ -215,10 +216,64 @@ async def decide_approval(approval_id: str, decision: ApprovalDecision):
     }
     if decision.edited_content is not None:
         update["content"] = decision.edited_content
+    if decision.status == "approved":
+        update["progress"] = "open"
     result = await db.approvals.update_one({"id": approval_id}, {"$set": update})
     if result.matched_count == 0:
         raise HTTPException(404, "Approval not found")
     return await db.approvals.find_one({"id": approval_id}, {"_id": 0})
+
+
+@api.post("/approvals/{approval_id}/progress", response_model=Approval)
+async def update_progress(approval_id: str, payload: ProgressUpdate):
+    """Move an approved item along its lifecycle: open → in_progress → done → archived."""
+    if payload.progress not in ("open", "in_progress", "done", "archived"):
+        raise HTTPException(400, "Invalid progress value")
+    update = {
+        "progress": payload.progress,
+        "progress_updated_at": now_iso(),
+    }
+    if payload.note is not None:
+        update["progress_note"] = payload.note
+    result = await db.approvals.update_one(
+        {"id": approval_id, "status": "approved"},
+        {"$set": update},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(404, "Approved approval not found")
+    return await db.approvals.find_one({"id": approval_id}, {"_id": 0})
+
+
+class ContentEdit(BaseModel):
+    content: Dict[str, Any]
+
+
+@api.put("/approvals/{approval_id}/content", response_model=Approval)
+async def edit_content(approval_id: str, payload: ContentEdit):
+    result = await db.approvals.update_one(
+        {"id": approval_id},
+        {"$set": {"content": payload.content}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(404, "Approval not found")
+    return await db.approvals.find_one({"id": approval_id}, {"_id": 0})
+
+
+@api.get("/clients/{client_id}/deliverables")
+async def list_deliverables(client_id: str):
+    """All approved items for a client, grouped by kind with progress counters."""
+    items = await db.approvals.find(
+        {"client_id": client_id, "status": "approved"},
+        {"_id": 0},
+    ).sort("decided_at", -1).to_list(500)
+    groups: dict = {}
+    counters = {"total": 0, "open": 0, "in_progress": 0, "done": 0, "archived": 0}
+    for it in items:
+        kind = it.get("kind", "other")
+        groups.setdefault(kind, []).append(it)
+        counters["total"] += 1
+        counters[it.get("progress") or "open"] = counters.get(it.get("progress") or "open", 0) + 1
+    return {"groups": groups, "counters": counters}
 
 
 # ============ GSC Integration ============
