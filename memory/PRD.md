@@ -60,6 +60,33 @@ only), Screaming Frog MCP.
 - Dashboard overview with live counters.
 - 100% backend test pass (25/25). 100% frontend test pass (15/15).
 
+### 2026-02-27 — Manual Semrush CSV uploads + Screaming Frog HTTP bridge
+- **Semrush manual CSV ingestion** — `backend/semrush_csv.py`. Auto-detects 5
+  export types from headers: domain_overview, organic_positions, competitors,
+  backlinks, keyword_gap. Handles semicolon/comma/tab delimiters and
+  UTF-8/BOM. Stored per-client under `clients.semrush_uploads.{type}`.
+  Endpoints: `POST/GET/DELETE /api/clients/{id}/integrations/semrush/upload[s]`.
+- **Workflow grounding prefers uploads over API** — Keyword Research uses
+  uploaded organic_positions + keyword_gap when present; Competitor Analysis
+  uses uploaded competitors + keyword_gap; Strategy Sprint adds backlinks +
+  domain_overview as extra context. Saves Semrush API credits.
+- **Screaming Frog HTTP bridge** — `backend/sf_bridge.py` + downloadable
+  `bridge/sf_bridge.py` that the user runs locally on Windows. Wraps
+  `ScreamingFrogSEOSpiderCli.exe` and exposes a small REST API (`/crawl`,
+  `/crawl/{id}`, `/crawl/{id}/files`, `/crawl/{id}/file/{filename}`). User
+  tunnels it via ngrok, pastes URL+token into the app. Cloud backend triggers
+  crawls and ingests the resulting CSVs through the existing screamingfrog
+  parser. Setup guide at `bridge/README.md` served at
+  `/api/integrations/sf-bridge/readme`.
+- New endpoints: `/api/clients/{id}/integrations/sf-bridge/{configure,status,
+  crawl,crawl/{job}/ingest,disconnect}` + global `/api/integrations/sf-bridge/
+  {download,readme}`.
+- Frontend: `SemrushUpload` (drag-drop, per-type tiles with clear button) +
+  `SfBridge` (config form, quick setup callout, crawl trigger panel, job
+  status polling, ingest-into-audit). Both wired on the Integrations page.
+- Tests: 8 unit tests for the CSV parser (tests/test_semrush_csv.py) + 13
+  endpoint tests added by the testing agent (test_semrush_sf_bridge_api.py).
+
 ### 2026-02-XX — Phase 3 complete: GA OAuth + Screaming Frog + Strategy grounded
 - **Google Analytics 4 OAuth** — `backend/ga.py`. Reuses Google client_id/secret from GSC
   setup, distinct `GA_REDIRECT_URI`, scope `analytics.readonly`. Endpoints under
@@ -113,22 +140,22 @@ only), Screaming Frog MCP.
 
 ## Backlog
 ### P0 — next session
-- Frontend e2e test pass (testing_agent_v3 — pending; was skipped per scope).
 - Inline result editing inside the approval dialog (currently shows JSON only).
 
 ### P1
-- Wire real GSC/GA OAuth + token storage (encrypted).
-- Wire Semrush + DataForSEO connectors and feed signals into prompts.
+- Browser automation / scraper for autonomous Semrush fetch (e.g. Openclaw)
+  so the CSV uploads can be auto-refreshed nightly.
+- Scheduled background jobs (nightly auto-refresh of GSC/GA, weekly strategy
+  sprints, on-demand SF crawl via the local bridge).
 - WordPress draft publisher (REST API, draft-only).
-- Screaming Frog MCP spike — feed crawl JSON into Technical Audit agent.
 - Per-agent prompt/version tracking + diff view.
 - Pagination + filters on runs/approvals lists.
 
 ### P2
-- Recurring/scheduled monitoring jobs.
+- Branded client PDF report generator.
 - Multi-client parallel job queue with concurrency cap.
-- Browser automation layer (Playwright service) for non-API workflows.
-- Electron packaging + Windows installer.
+- Electron packaging + Windows installer (would let the SF bridge ship inside
+  the app instead of as a separate script).
 - Local model fallback for selected tasks.
 
 ## Notes

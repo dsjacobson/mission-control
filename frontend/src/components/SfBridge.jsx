@@ -299,8 +299,22 @@ export default function SfBridge({ clientId }) {
               </Button>
             )}
           </div>
-          {isFailed && jobStatus.error && (
-            <div className="text-xs text-rose-400 font-mono break-words">{jobStatus.error}</div>
+          {isFailed && (jobStatus.error || (jobStatus.stdout_tail || []).length > 0) && (
+            <div className="mt-1 space-y-1.5">
+              {jobStatus.error && (
+                <div className="text-xs text-rose-400 font-mono whitespace-pre-wrap break-words rounded-sm border border-rose-400/20 bg-rose-400/5 p-2">
+                  {jobStatus.error}
+                </div>
+              )}
+              {(jobStatus.stdout_tail || []).length > 0 && (
+                <details className="text-[11px] font-mono text-zinc-500">
+                  <summary className="cursor-pointer hover:text-zinc-300">Screaming Frog output</summary>
+                  <pre className="mt-1 p-2 rounded-sm border border-zinc-800 bg-zinc-950 text-zinc-400 whitespace-pre-wrap break-words max-h-48 overflow-y-auto">
+                    {(jobStatus.stdout_tail || []).join("\n")}
+                  </pre>
+                </details>
+              )}
+            </div>
           )}
         </div>
       )}

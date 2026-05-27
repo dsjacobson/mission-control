@@ -88,6 +88,7 @@ class JobState:
             "started_at": self.started_at,
             "finished_at": self.finished_at,
             "request": self.request,
+            "stdout_tail": self.stdout[-30:] if self.stdout else [],
         }
 
 
@@ -109,8 +110,6 @@ def run_crawl(state: JobState, cli_path: str) -> None:
         "--output-folder", str(out_dir),
         "--overwrite",
     ]
-    if state.request.get("max_urls"):
-        args += ["--config", ""]  # placeholder if config tweaks needed
     export_tabs = state.request.get("export_tabs") or []
     if export_tabs:
         args += ["--export-tabs", ",".join(export_tabs)]
@@ -123,10 +122,15 @@ def run_crawl(state: JobState, cli_path: str) -> None:
     state.started_at = now_iso()
     try:
         proc = subprocess.run(args, capture_output=True, text=True, timeout=60 * 60)
-        state.stdout = (proc.stdout or "").splitlines()[-50:]
+        out_tail = (proc.stdout or "").splitlines()[-30:]
+        err_tail = (proc.stderr or "").splitlines()[-30:]
+        state.stdout = out_tail + err_tail
         if proc.returncode != 0:
             state.status = "failed"
-            state.error = (proc.stderr or "")[-500:] or f"exit code {proc.returncode}"
+            # Build an informative error from stderr first, then stdout, then code
+            err_text = (proc.stderr or "").strip()
+            out_text = (proc.stdout or "").strip()
+            state.error = (err_text[-800:] or out_text[-800:] or f"exit code {proc.returncode}")
         else:
             state.status = "done"
     except subprocess.TimeoutExpired:

@@ -57,7 +57,8 @@ async def test_connection(base_url: str, token: Optional[str] = None) -> Dict[st
     except httpx.HTTPStatusError as e:
         return {"ok": False, "error": f"HTTP {e.response.status_code}"}
     except Exception as e:
-        return {"ok": False, "error": str(e)[:200]}
+        msg = str(e) or type(e).__name__
+        return {"ok": False, "error": msg[:200]}
 
 
 async def start_crawl(
