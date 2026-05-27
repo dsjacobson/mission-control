@@ -802,6 +802,8 @@ async def sf_bridge_crawl(client_id: str, payload: SfCrawlRequest):
         )
     except sf_bridge.BridgeError as e:
         raise HTTPException(502, str(e))
+    except Exception as e:
+        raise HTTPException(502, f"Could not reach bridge: {str(e) or type(e).__name__}")
     job_id = started.get("job_id")
     # Persist active job so the UI can poll
     await db.clients.update_one(
@@ -825,6 +827,8 @@ async def sf_bridge_crawl_status(client_id: str, job_id: str):
         return await sf_bridge.get_status(cfg["base_url"], cfg.get("token"), job_id)
     except sf_bridge.BridgeError as e:
         raise HTTPException(502, str(e))
+    except Exception as e:
+        raise HTTPException(502, f"Could not reach bridge: {str(e) or type(e).__name__}")
 
 
 @api.post("/clients/{client_id}/integrations/sf-bridge/crawl/{job_id}/ingest")
@@ -838,6 +842,8 @@ async def sf_bridge_ingest(client_id: str, job_id: str):
         files = await sf_bridge.list_files(cfg["base_url"], cfg.get("token"), job_id)
     except sf_bridge.BridgeError as e:
         raise HTTPException(502, str(e))
+    except Exception as e:
+        raise HTTPException(502, f"Could not reach bridge: {str(e) or type(e).__name__}. Check that the bridge + ngrok are still running and the URL is current.")
     if not files:
         raise HTTPException(400, "No CSVs available yet — wait for the crawl to finish")
 
@@ -862,6 +868,8 @@ async def sf_bridge_ingest(client_id: str, job_id: str):
         text = await sf_bridge.fetch_file(cfg["base_url"], cfg.get("token"), job_id, chosen)
     except sf_bridge.BridgeError as e:
         raise HTTPException(502, str(e))
+    except Exception as e:
+        raise HTTPException(502, f"Could not fetch CSV from bridge: {str(e) or type(e).__name__}")
     parsed = screamingfrog.parse_csv(text)
     if parsed.get("format") == "unknown":
         raise HTTPException(400, f"Could not parse {chosen} — try a different export")
