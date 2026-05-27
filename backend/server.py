@@ -276,6 +276,58 @@ async def list_deliverables(client_id: str):
     return {"groups": groups, "counters": counters}
 
 
+@api.get("/clients/{client_id}/tasks")
+async def list_tasks(client_id: str, status_filter: Optional[str] = Query(None, alias="status")):
+    """Flat client-facing task list. Each approval is a task with a clear action."""
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0, "name": 1, "domain": 1, "share_token": 1})
+    if not client:
+        raise HTTPException(404, "Client not found")
+    q: dict = {"client_id": client_id, "status": "approved"}
+    if status_filter:
+        q["progress"] = status_filter
+    items = await db.approvals.find(q, {"_id": 0}).sort("decided_at", -1).to_list(500)
+    counters = {"total": len(items), "open": 0, "in_progress": 0, "done": 0, "archived": 0}
+    for it in items:
+        p = it.get("progress") or "open"
+        counters[p] = counters.get(p, 0) + 1
+    return {
+        "client": {"name": client.get("name"), "domain": client.get("domain"), "share_token": client.get("share_token")},
+        "counters": counters,
+        "tasks": items,
+    }
+
+
+@api.get("/share/{token}/tasks")
+async def share_tasks(token: str):
+    """Public read-only client-facing view of approved tasks for a client."""
+    client = await db.clients.find_one({"share_token": token}, {"_id": 0, "name": 1, "domain": 1, "id": 1})
+    if not client:
+        raise HTTPException(404, "Share link invalid or expired")
+    items = await db.approvals.find(
+        {"client_id": client["id"], "status": "approved", "progress": {"$ne": "archived"}},
+        {"_id": 0, "id": 1, "kind": 1, "title": 1, "summary": 1, "content": 1, "progress": 1, "decided_at": 1, "progress_updated_at": 1},
+    ).sort("decided_at", -1).to_list(500)
+    counters = {"total": len(items), "open": 0, "in_progress": 0, "done": 0}
+    for it in items:
+        p = it.get("progress") or "open"
+        if p in counters:
+            counters[p] += 1
+    return {
+        "client": {"name": client.get("name"), "domain": client.get("domain")},
+        "counters": counters,
+        "tasks": items,
+    }
+
+
+@api.post("/clients/{client_id}/share-token/rotate")
+async def rotate_share_token(client_id: str):
+    new_token = new_id()
+    res = await db.clients.update_one({"id": client_id}, {"$set": {"share_token": new_token}})
+    if res.matched_count == 0:
+        raise HTTPException(404, "Client not found")
+    return {"share_token": new_token}
+
+
 # ============ GSC Integration ============
 
 @api.get("/integrations/gsc/connect")

@@ -12,6 +12,7 @@ import {
   Download,
   Copy,
   ChevronRight,
+  Pencil,
 } from "lucide-react";
 import api from "../lib/api";
 import { useClients } from "../lib/ClientContext";
@@ -19,10 +20,12 @@ import { PageHeader, Section, StatTile, EmptyState, formatRelative } from "../co
 import { Button } from "../components/ui/button";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/tabs";
 import { toast } from "sonner";
+import PageOptimizationCard from "../components/PageOptimizationCard";
 
 const KIND_META = {
   content_brief: { label: "Content briefs", icon: FileText, tone: "text-emerald-400" },
   technical_action: { label: "Technical actions", icon: Wrench, tone: "text-amber-400" },
+  page_optimization: { label: "Page optimizations", icon: Pencil, tone: "text-sky-400" },
   strategy_doc: { label: "Strategy docs", icon: Lightbulb, tone: "text-sky-400" },
   competitor_insight: { label: "Competitor insights", icon: Telescope, tone: "text-rose-400" },
   wordpress_draft: { label: "WordPress drafts", icon: FileText, tone: "text-violet-300" },
@@ -207,6 +210,11 @@ function DeliverableCard({ item, kind, busy, onProgress, onCopy, onDownload }) {
           {kind === "content_brief" && <ContentBriefPreview content={item.content} />}
           {kind === "technical_action" && <TechActionPreview content={item.content} />}
           {kind === "strategy_doc" && <StrategyPreview content={item.content} />}
+          {kind === "page_optimization" && (
+            <div className="mt-3">
+              <PageOptimizationCard content={item.content} testIdPrefix={`po-${item.id}`} />
+            </div>
+          )}
           {item.progress_note && (
             <div className="mt-2 text-xs text-zinc-400 italic">Note: {item.progress_note}</div>
           )}
@@ -351,6 +359,18 @@ function renderMarkdown(item) {
       c.recommendations.forEach((r) => lines.push(`- **${r.title}** — ${r.rationale || ""} (impact: ${r.expected_impact || "—"})`));
       lines.push("");
     }
+  } else if (item.kind === "page_optimization") {
+    if (c.url) lines.push(`**Page**: ${c.url}`, "");
+    if (c.target_keyword) lines.push(`**Target keyword**: ${c.target_keyword}`, "");
+    lines.push("## Proposed title", "", `${c.proposed_title || ""} (${c.title_char_count || 0}/60)`, "");
+    lines.push("## Proposed meta description", "", `${c.proposed_meta || ""} (${c.meta_char_count || 0}/155)`, "");
+    lines.push("## Proposed H1", "", c.proposed_h1 || "", "");
+    if (Array.isArray(c.schema_notes) && c.schema_notes.length > 0) {
+      lines.push("## Schema notes", "");
+      c.schema_notes.forEach((s) => lines.push(`- ${s}`));
+      lines.push("");
+    }
+    if (c.rationale) lines.push("## Rationale", "", c.rationale, "");
   }
   lines.push("```json", JSON.stringify(c, null, 2), "```");
   return lines.join("\n");

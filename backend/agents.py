@@ -34,6 +34,7 @@ AGENT_LABELS = {
     "competitor": "Competitor Analysis Agent",
     "strategy": "Strategy Agent",
     "publisher": "Publisher Assistant",
+    "onpage": "On-Page Optimizer Agent",
 }
 
 
@@ -70,6 +71,14 @@ SYSTEM_PROMPTS = {
         "You are the Publisher Assistant. Prepare a WordPress draft post outline "
         "(title, slug, meta description, H2/H3 outline, internal link suggestions, "
         "target keywords). DRAFT ONLY - never publish. Output strict JSON only."
+    ),
+    "onpage": (
+        "You are the On-Page Optimizer Agent. You DO the work — you do not merely "
+        "recommend. For each page provided, write a finished, ready-to-paste, "
+        "SEO-optimized title tag (≤60 characters), meta description (≤155 characters), "
+        "H1, and 2-3 schema/markup notes. Use the page's actual GSC queries (when "
+        "given) as keyword signals. Be concrete and copy-paste ready. Output strict "
+        "JSON only."
     ),
 }
 
@@ -322,3 +331,91 @@ Return strict JSON:
 }}"""
     raw = await _run_agent("publisher", run_id, prompt)
     return _safe_parse_json(raw, fallback={"title": topic, "outline": []})
+
+
+# ---------- On-Page Optimizer ----------
+
+async def optimize_pages(run_id: str, client: Dict[str, Any], pages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """For each page produce concrete, ready-to-paste title, meta, H1.
+
+    pages: list of {url, current_title?, current_meta?, current_h1?, gsc_queries: [str], clicks?, impressions?}
+    Returns enriched list with proposed_title, proposed_meta, proposed_h1, target_keyword,
+    title_char_count, meta_char_count, schema_notes.
+    """
+    if not pages:
+        return []
+    pages = pages[:10]  # safety cap
+
+    # Build compact prompt
+    page_blocks = []
+    for i, p in enumerate(pages, 1):
+        queries = ", ".join((p.get("gsc_queries") or [])[:8]) or "n/a"
+        page_blocks.append(
+            f"{i}. URL: {p.get('url')}\n"
+            f"   Current title: {p.get('current_title') or '(missing)'}\n"
+            f"   Current meta: {p.get('current_meta') or '(missing)'}\n"
+            f"   Current H1: {p.get('current_h1') or '(unknown)'}\n"
+            f"   GSC top queries: {queries}\n"
+            f"   Clicks (28d): {p.get('clicks', 'n/a')} · Impressions: {p.get('impressions', 'n/a')}"
+        )
+    body = "\n\n".join(page_blocks)
+
+    prompt = f"""Client: {client.get('name')} · {client.get('domain')}
+Industry: {client.get('industry') or 'unspecified'}
+Goals: {client.get('goals') or 'general SEO growth'}
+
+Optimize the following pages. For each, write a ready-to-paste:
+- proposed_title (≤60 chars, include primary target keyword, distinct from competitors, click-worthy)
+- proposed_meta (≤155 chars, action-oriented, include primary keyword)
+- proposed_h1 (clear, keyword-aligned, can differ slightly from title)
+- target_keyword (the single primary keyword you optimized for)
+- schema_notes (2-3 short suggestions: Article, Recipe, Product, FAQPage, BreadcrumbList, etc.)
+
+Pages:
+{body}
+
+Return strict JSON:
+{{
+  "pages": [
+    {{
+      "url": "string",
+      "proposed_title": "string",
+      "proposed_meta": "string",
+      "proposed_h1": "string",
+      "target_keyword": "string",
+      "schema_notes": ["...", "..."],
+      "rationale": "string (1-2 sentences explaining the keyword choice)"
+    }}
+  ]
+}}
+Order the pages identically to the input list. Use distinct keywords across pages."""
+
+    raw = await _run_agent("onpage", run_id, prompt)
+    data = _safe_parse_json(raw, fallback={"pages": []})
+    out_pages = data.get("pages") if isinstance(data, dict) else None
+    if not isinstance(out_pages, list):
+        return []
+
+    # Merge with input context (preserve current values for before/after)
+    result = []
+    for i, prop in enumerate(out_pages[: len(pages)]):
+        src = pages[i] if i < len(pages) else {}
+        title = (prop.get("proposed_title") or "").strip()
+        meta = (prop.get("proposed_meta") or "").strip()
+        result.append({
+            "url": prop.get("url") or src.get("url"),
+            "current_title": src.get("current_title") or "",
+            "current_meta": src.get("current_meta") or "",
+            "current_h1": src.get("current_h1") or "",
+            "proposed_title": title,
+            "proposed_meta": meta,
+            "proposed_h1": (prop.get("proposed_h1") or "").strip(),
+            "target_keyword": prop.get("target_keyword") or "",
+            "schema_notes": prop.get("schema_notes") or [],
+            "rationale": prop.get("rationale") or "",
+            "title_char_count": len(title),
+            "meta_char_count": len(meta),
+            "gsc_clicks": src.get("clicks"),
+            "gsc_impressions": src.get("impressions"),
+        })
+    return result

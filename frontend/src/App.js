@@ -13,6 +13,8 @@ import Competitors from "@/pages/Competitors";
 import Integrations from "@/pages/Integrations";
 import Approvals from "@/pages/Approvals";
 import Deliverables from "@/pages/Deliverables";
+import Tasks from "@/pages/Tasks";
+import SharePage from "@/pages/SharePage";
 import History from "@/pages/History";
 import RunDetails from "@/pages/RunDetails";
 
@@ -22,6 +24,8 @@ function App() {
       <ClientProvider>
         <BrowserRouter>
           <Routes>
+            {/* Public read-only client share view */}
+            <Route path="/share/:token" element={<SharePage />} />
             <Route element={<Layout />}>
               <Route path="/" element={<Dashboard />} />
               <Route path="/clients" element={<ClientsList />} />
@@ -31,6 +35,7 @@ function App() {
               <Route path="/clients/:clientId/integrations" element={<Integrations />} />
               <Route path="/clients/:clientId/approvals" element={<Approvals />} />
               <Route path="/clients/:clientId/deliverables" element={<Deliverables />} />
+              <Route path="/clients/:clientId/tasks" element={<Tasks />} />
               <Route path="/approvals" element={<Approvals />} />
               <Route path="/history" element={<History />} />
               <Route path="/runs/:runId" element={<RunDetails />} />

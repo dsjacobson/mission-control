@@ -59,6 +59,17 @@ export const api = {
     client.put(`/approvals/${id}/content`, { content }).then((r) => r.data),
   listDeliverables: (clientId) =>
     client.get(`/clients/${clientId}/deliverables`).then((r) => r.data),
+  listTasks: (clientId, status) =>
+    client.get(`/clients/${clientId}/tasks`, { params: status ? { status } : {} }).then((r) => r.data),
+  rotateShareToken: (clientId) =>
+    client.post(`/clients/${clientId}/share-token/rotate`).then((r) => r.data),
+  shareTasksUrl: (token) => `${API}/share/${token}/tasks`,
+  publicShareUrl: (token) => {
+    const origin = process.env.REACT_APP_BACKEND_URL;
+    return `${origin}/share/${token}`;
+  },
+  fetchShareTasks: (token) =>
+    client.get(`/share/${token}/tasks`).then((r) => r.data),
 
   // Dashboard
   dashboardSummary: () => client.get("/dashboard/summary").then((r) => r.data),

@@ -170,6 +170,16 @@ async def _create_approvals_for_run(db, run: Dict[str, Any]) -> None:
                 summary=f"{issue.get('priority', 'P2')} · impact {issue.get('impact', '-')}/5 · effort {issue.get('effort', '-')}/5",
                 content=issue,
             ))
+        for opt in (results.get("page_optimizations") or [])[:10]:
+            url = opt.get("url") or ""
+            short_url = url.replace("https://", "").replace("http://", "")[:50]
+            approvals.append(Approval(
+                run_id=run_id, client_id=client_id, client_name=client_name,
+                kind="page_optimization",
+                title=f"Optimize: {short_url}",
+                summary=f"Target: {opt.get('target_keyword') or '—'} · title {opt.get('title_char_count', 0)}/60ch · meta {opt.get('meta_char_count', 0)}/155ch",
+                content=opt,
+            ))
     elif rtype == "competitor_analysis":
         for opp in (results.get("opportunities") or [])[:5]:
             approvals.append(Approval(
@@ -301,6 +311,35 @@ async def run_workflow(db: AsyncIOMotorDatabase, run_id: str) -> None:
                 pass
             results = await agents.technical_audit(run_id, client, objective,
                                                    sf_context=sf_block, ga_context=ga_block, gsc_context=gsc_block_for_audit)
+
+            # Auto-generate concrete page-level optimizations for top pages
+            try:
+                pages_to_optimize = []
+                gsc_cache = await gsc.get_performance_cache(db, client["id"])
+                if gsc_cache and gsc_cache.get("by_page"):
+                    # Top 8 pages by impressions
+                    top = sorted(gsc_cache["by_page"], key=lambda x: x.get("impressions") or 0, reverse=True)[:8]
+                    # Build query-by-page map (use overall top queries as proxy when per-page not available)
+                    top_queries_overall = [q.get("key") for q in (gsc_cache.get("by_query") or [])[:15] if q.get("key")]
+                    for p in top:
+                        pages_to_optimize.append({
+                            "url": p.get("key"),
+                            "gsc_queries": top_queries_overall[:6],  # global signal
+                            "clicks": p.get("clicks"),
+                            "impressions": p.get("impressions"),
+                        })
+
+                if pages_to_optimize:
+                    await _log(db, run_id, "onpage", f"On-Page Optimizer engaged · rewriting {len(pages_to_optimize)} top pages", "info")
+                    optimizations = await agents.optimize_pages(run_id, client, pages_to_optimize)
+                    if optimizations:
+                        results["page_optimizations"] = optimizations
+                        await _log(db, run_id, "onpage", f"Produced {len(optimizations)} page rewrites", "success")
+                else:
+                    await _log(db, run_id, "onpage", "No GSC pages available — skipping on-page rewrites (connect GSC to enable)", "warning")
+            except Exception as e:
+                await _log(db, run_id, "onpage", f"On-page optimization failed: {e}", "warning")
+
         elif rtype == "competitor_analysis":
             comp_context = None
             try:

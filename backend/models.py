@@ -50,6 +50,7 @@ class Client(BaseModel):
     notes: str = ""
     competitors: List[Competitor] = Field(default_factory=list)
     integrations: IntegrationConfig = Field(default_factory=IntegrationConfig)
+    share_token: str = Field(default_factory=new_id)
     created_at: str = Field(default_factory=now_iso)
     updated_at: str = Field(default_factory=now_iso)
 
@@ -132,6 +133,7 @@ ApprovalKind = Literal[
     "strategy_doc",
     "wordpress_draft",
     "competitor_insight",
+    "page_optimization",
 ]
 
 
