@@ -103,6 +103,9 @@ def parse_csv(text: str) -> Dict[str, Any]:
     if not text or not text.strip():
         return {"type": "empty", "rows": 0, "items": [], "summary": {}}
 
+    if text.startswith("\ufeff"):
+        text = text.lstrip("\ufeff")
+
     # Sniff delimiter from the first non-empty line
     first_line = next((ln for ln in text.splitlines() if ln.strip()), "")
     delim = _sniff_delimiter(first_line)
@@ -112,7 +115,7 @@ def parse_csv(text: str) -> Dict[str, Any]:
     if len(rows) < 1:
         return {"type": "empty", "rows": 0, "items": [], "summary": {}}
 
-    headers = [h.strip() for h in rows[0]]
+    headers = [h.strip().lstrip("\ufeff") for h in rows[0]]
     data_rows = [dict(zip(headers, r)) for r in rows[1:]]
 
     export_type = _detect_type(headers)

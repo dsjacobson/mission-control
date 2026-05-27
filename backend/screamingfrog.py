@@ -28,12 +28,15 @@ def _detect_format(headers: List[str]) -> str:
 
 def parse_csv(text: str) -> Dict[str, Any]:
     """Parse a Screaming Frog CSV export into a structured summary."""
+    # Strip UTF-8 BOM if present (SF v24 issues_overview_report.csv emits one)
+    if text.startswith("\ufeff"):
+        text = text.lstrip("\ufeff")
     reader = csv.reader(io.StringIO(text))
     rows = list(reader)
     if not rows:
         return {"format": "empty", "rows": 0, "summary": {}, "issues": []}
 
-    headers = [h.strip() for h in rows[0]]
+    headers = [h.strip().lstrip("\ufeff") for h in rows[0]]
     fmt = _detect_format(headers)
     data_rows = [dict(zip(headers, r)) for r in rows[1:] if any(r)]
 
