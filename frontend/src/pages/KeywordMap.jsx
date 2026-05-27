@@ -507,14 +507,15 @@ function KeywordDrawer({ clientId, keyword, fullData, onClose, onChanged }) {
                 </div>
               )}
               {fullData.serp.organic.map((o, i) => (
-                <div key={i} className="text-[11px] rounded-sm border border-zinc-800 bg-zinc-900/50 p-2">
-                  <div className="flex items-center gap-2 mb-0.5">
+                <div key={i} className="text-[11px] rounded-sm border border-zinc-800 bg-zinc-900/50 p-2 space-y-1.5">
+                  <div className="flex items-center gap-2">
                     <span className="text-zinc-500 font-mono shrink-0">#{o.rank}</span>
                     <a href={o.url} target="_blank" rel="noopener noreferrer" className="text-emerald-300 hover:text-emerald-200 font-mono break-all">
                       {o.domain}
                     </a>
                   </div>
                   <div className="text-zinc-200 leading-snug">{o.title}</div>
+                  {o.backlinks_profile && <BacklinkBar profile={o.backlinks_profile} />}
                 </div>
               ))}
             </div>
@@ -531,6 +532,43 @@ function Metric({ label, value }) {
       <div className="text-[9px] font-mono text-zinc-500 uppercase tracking-wider">{label}</div>
       <div className="text-zinc-100 font-heading text-base mt-0.5">{value}</div>
     </div>
+  );
+}
+
+function BacklinkBar({ profile }) {
+  if (!profile) return null;
+  const fmt = (n) => (n == null ? "—" : n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : n.toLocaleString());
+  const dr = profile.domain_rating;
+  const pr = profile.page_rating;
+  // DR scaled to 0-100 (DataForSEO uses 0-1000; divide by 10 for Ahrefs-like display)
+  const drScaled = dr != null ? Math.round(dr / 10) : null;
+  const prScaled = pr != null ? Math.round(pr / 10) : null;
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 pt-1.5 border-t border-zinc-800">
+      <BLPill label="DR" value={drScaled} tone="emerald" title="Domain Rating (0-100)" />
+      <BLPill label="PR" value={prScaled} tone="sky" title="Page Rating (0-100)" />
+      <BLPill label="BL" value={fmt(profile.backlinks)} title="Total backlinks pointing at this URL" />
+      <BLPill label="RD" value={fmt(profile.referring_domains)} title="Total referring domains" />
+      <BLPill
+        label="Dofollow"
+        value={fmt(profile.referring_domains_dofollow)}
+        tone="emerald"
+        title="Dofollow referring domains (total − nofollow)"
+      />
+    </div>
+  );
+}
+
+function BLPill({ label, value, tone = "zinc", title }) {
+  const toneCls =
+    tone === "emerald" ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-300"
+    : tone === "sky" ? "border-sky-400/30 bg-sky-400/10 text-sky-300"
+    : "border-zinc-700 bg-zinc-900 text-zinc-300";
+  return (
+    <span title={title} className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm border ${toneCls} font-mono text-[10px]`}>
+      <span className="opacity-70 uppercase">{label}</span>
+      <span>{value ?? "—"}</span>
+    </span>
   );
 }
 

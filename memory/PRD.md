@@ -60,7 +60,7 @@ only), Screaming Frog MCP.
 - Dashboard overview with live counters.
 - 100% backend test pass (25/25). 100% frontend test pass (15/15).
 
-### 2026-02-27 — Manual Semrush CSV uploads + Screaming Frog HTTP bridge
+### 2026-02-27 — Manual Semrush CSV uploads + Screaming Frog HTTP bridge + Issue routing + Keyword Map
 - **Semrush manual CSV ingestion** — `backend/semrush_csv.py`. Auto-detects 5
   export types from headers: domain_overview, organic_positions, competitors,
   backlinks, keyword_gap. Handles semicolon/comma/tab delimiters and
@@ -74,18 +74,38 @@ only), Screaming Frog MCP.
   `bridge/sf_bridge.py` that the user runs locally on Windows. Wraps
   `ScreamingFrogSEOSpiderCli.exe` and exposes a small REST API (`/crawl`,
   `/crawl/{id}`, `/crawl/{id}/files`, `/crawl/{id}/file/{filename}`). User
-  tunnels it via ngrok, pastes URL+token into the app. Cloud backend triggers
-  crawls and ingests the resulting CSVs through the existing screamingfrog
-  parser. Setup guide at `bridge/README.md` served at
-  `/api/integrations/sf-bridge/readme`.
-- New endpoints: `/api/clients/{id}/integrations/sf-bridge/{configure,status,
-  crawl,crawl/{job}/ingest,disconnect}` + global `/api/integrations/sf-bridge/
-  {download,readme}`.
-- Frontend: `SemrushUpload` (drag-drop, per-type tiles with clear button) +
-  `SfBridge` (config form, quick setup callout, crawl trigger panel, job
-  status polling, ingest-into-audit). Both wired on the Integrations page.
-- Tests: 8 unit tests for the CSV parser (tests/test_semrush_csv.py) + 13
-  endpoint tests added by the testing agent (test_semrush_sf_bridge_api.py).
+  tunnels via ngrok, pastes URL+token. Resilient cloud poller handles
+  transient ngrok blips. Surfaces SF stdout/stderr on failure.
+- **Bridge ingest pulls three datasets** — issues_overview (audit signals),
+  internal_all (per-URL page index w/ real title/meta/H1 for ~2000 URLs),
+  and every bulk-issue CSV (issue → affected URLs map for routing).
+- **Issue routing for technical_action approvals** — `backend/issue_router.py`
+  categorizes each audit issue (metadata / content / structural / performance
+  / security). Each bucket has a dedicated agent prompt + artifact shape:
+  metadata → page_fixes with real current values; content → per-URL
+  remediation directive + on-demand draft expansion; structural → action
+  table; performance/security → implementation brief with code snippet.
+- **Workflow OnPage path** now pulls real current title/meta/H1 from SF page
+  index when rewriting top GSC pages.
+- **URL normalization** — strips protocol/www/trailing-slash/fragment for
+  SF↔GSC↔Semrush URL matching. Token-overlap matcher allows short tokens
+  like "h1"/"4xx" through after stop-word filtering.
+- **Keyword Map** — new top-level client page (`pages/KeywordMap.jsx`,
+  `backend/keyword_map.py`). Aggregates target keywords from 3 sources:
+  GSC by_query_page (new joint dimension pull), Semrush organic positions
+  CSV, Semrush keyword gap CSV. Classifies each keyword as aligned /
+  cannibalized / wrong_page / missing_page / under_optimized. Per-keyword
+  drawer shows position, volume, cannibal URLs, competitor URLs, and live
+  SERP top-10 (DataForSEO Google Organic Live Regular) with backlink
+  metrics for each ranked URL (DR, PR, total backlinks, referring domains,
+  derived dofollow domains via bulk endpoints — ~$0.003 per fetch).
+- **Page-first sparse analyzer** — `backend/page_analyzer.py` fetches a
+  URL, strips HTML to title/headings/body, AI agent identifies primary
+  keyword, DataForSEO returns related variants with volume/intent,
+  recommends optimal mapped keyword. Surfaced via "Sparse pages" panel
+  for URLs with weak keyword signal.
+- Tests: 27 unit tests across CSV parsing, issue routing, URL normalization,
+  keyword map aggregation, status classification.
 
 ### 2026-02-XX — Phase 3 complete: GA OAuth + Screaming Frog + Strategy grounded
 - **Google Analytics 4 OAuth** — `backend/ga.py`. Reuses Google client_id/secret from GSC

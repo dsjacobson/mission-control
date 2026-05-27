@@ -1081,7 +1081,7 @@ async def keyword_map_serp(client_id: str, payload: SerpRequest):
     serp_count = sum(1 for k in (map_doc.get("keywords") or {}).values() if k.get("serp"))
     if serp_count >= SERP_KEYWORD_CAP:
         raise HTTPException(429, f"SERP fetch cap reached ({SERP_KEYWORD_CAP}). Clear some or raise the cap.")
-    serp = await dfs_lib.serp_top10(payload.keyword)
+    serp = await dfs_lib.serp_with_backlinks(payload.keyword)
     if not serp.get("organic"):
         raise HTTPException(502, "DataForSEO returned no SERP results")
     await kw_map_lib.attach_serp_landscape(db, client_id, payload.keyword, serp)

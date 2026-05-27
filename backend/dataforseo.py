@@ -254,6 +254,104 @@ async def serp_top10(
     }
 
 
+async def _bulk_post(path: str, targets: List[str]) -> List[Dict[str, Any]]:
+    """Generic helper for /backlinks/bulk_*_live endpoints.
+    Targets can be domains or URLs depending on the endpoint."""
+    if not targets:
+        return []
+    payload = [{"targets": targets}]
+    body = await _post(path, payload)
+    items = _first_result(body)
+    if items and isinstance(items[0], dict) and "items" in items[0]:
+        items = items[0].get("items") or []
+    return items or []
+
+
+async def backlinks_bulk(urls: List[str], domains: List[str]) -> Dict[str, Dict[str, Any]]:
+    """For each URL: return DR (domain rank), PR (page rank), total backlinks,
+    referring domains, referring nofollow domains, and derived dofollow domains.
+
+    Returns dict keyed by URL → {dr, pr, backlinks, referring_domains,
+    referring_domains_nofollow, referring_domains_dofollow}.
+
+    Three bulk calls total regardless of URL count (~$0.003/SERP).
+    """
+    if not urls:
+        return {}
+
+    # Run all three bulk calls in parallel for efficiency
+    import asyncio
+    url_ranks_task = _bulk_post("/backlinks/bulk_ranks/live", urls)
+    backlinks_task = _bulk_post("/backlinks/bulk_backlinks/live", urls)
+    refdoms_task = _bulk_post("/backlinks/bulk_referring_domains/live", urls)
+
+    # Domain ranks only need unique domains
+    unique_domains = list(dict.fromkeys([d for d in (domains or []) if d]))
+    domain_ranks_task = _bulk_post("/backlinks/bulk_ranks/live", unique_domains) if unique_domains else asyncio.sleep(0, result=[])
+
+    url_ranks, backlinks_data, refdoms, dom_ranks = await asyncio.gather(
+        url_ranks_task, backlinks_task, refdoms_task, domain_ranks_task,
+        return_exceptions=True,
+    )
+
+    def _index_by_target(items):
+        if isinstance(items, Exception):
+            return {}
+        return {it.get("target"): it for it in (items or []) if it.get("target")}
+
+    url_rank_by = _index_by_target(url_ranks)
+    bl_by = _index_by_target(backlinks_data)
+    rd_by = _index_by_target(refdoms)
+    dr_by = _index_by_target(dom_ranks)
+
+    out: Dict[str, Dict[str, Any]] = {}
+    for url, domain in zip(urls, domains or [None] * len(urls)):
+        ur = url_rank_by.get(url) or {}
+        bl = bl_by.get(url) or {}
+        rd = rd_by.get(url) or {}
+        dr = (dr_by.get(domain) or {}) if domain else {}
+
+        total_refdoms = rd.get("referring_domains")
+        nofollow_refdoms = rd.get("referring_domains_nofollow")
+        dofollow_refdoms = None
+        if total_refdoms is not None and nofollow_refdoms is not None:
+            dofollow_refdoms = max(0, total_refdoms - nofollow_refdoms)
+
+        out[url] = {
+            "domain_rating": dr.get("rank"),
+            "page_rating": ur.get("rank"),
+            "backlinks": bl.get("backlinks"),
+            "referring_domains": total_refdoms,
+            "referring_domains_nofollow": nofollow_refdoms,
+            "referring_domains_dofollow": dofollow_refdoms,
+            "referring_main_domains": rd.get("referring_main_domains"),
+        }
+    return out
+
+
+async def serp_with_backlinks(
+    keyword: str,
+    location_code: int = DEFAULT_LOCATION_CODE,
+    language_code: str = DEFAULT_LANGUAGE_CODE,
+) -> Dict[str, Any]:
+    """SERP top-10 with per-URL backlink metrics merged in."""
+    serp = await serp_top10(keyword, location_code, language_code)
+    if not serp.get("organic"):
+        return serp
+    urls = [o.get("url") for o in serp["organic"] if o.get("url")]
+    domains = [o.get("domain") for o in serp["organic"] if o.get("url")]
+    try:
+        bl = await backlinks_bulk(urls, domains)
+    except Exception as e:
+        serp["backlinks_error"] = str(e)[:200]
+        return serp
+    for o in serp["organic"]:
+        u = o.get("url")
+        if u and u in bl:
+            o["backlinks_profile"] = bl[u]
+    return serp
+
+
 
     if not is_configured():
         return {"ok": False, "error": "not configured"}
