@@ -42,12 +42,20 @@ def _headers(token: Optional[str]) -> Dict[str, str]:
     return h
 
 
+async def _rpc_get(base_url: str, token: Optional[str], path: str, timeout: float = 30.0) -> "httpx.Response":
+    """Single GET with explicit connect/read timeouts (ngrok cold-starts can stall briefly)."""
+    timeouts = httpx.Timeout(connect=15.0, read=timeout, write=15.0, pool=15.0)
+    async with httpx.AsyncClient(timeout=timeouts) as c:
+        return await c.get(f"{_strip(base_url)}{path}", headers=_headers(token))
+
+
 async def test_connection(base_url: str, token: Optional[str] = None) -> Dict[str, Any]:
     base = _strip(base_url)
     if not base:
         return {"ok": False, "error": "no_url"}
     try:
-        async with httpx.AsyncClient(timeout=15.0) as c:
+        timeouts = httpx.Timeout(connect=10.0, read=15.0, write=10.0, pool=10.0)
+        async with httpx.AsyncClient(timeout=timeouts) as c:
             r = await c.get(f"{base}/health", headers=_headers(token))
             if r.status_code == 401:
                 return {"ok": False, "error": "unauthorized"}
@@ -75,7 +83,8 @@ async def start_crawl(
         "export_tabs": export_tabs or ["Internal:All", "Response Codes:Client Error (4xx)", "Page Titles:Missing"],
         "bulk_exports": bulk_exports or ["Issues:All"],
     }
-    async with httpx.AsyncClient(timeout=30.0) as c:
+    timeouts = httpx.Timeout(connect=15.0, read=30.0, write=15.0, pool=15.0)
+    async with httpx.AsyncClient(timeout=timeouts) as c:
         r = await c.post(f"{_strip(base_url)}/crawl", json=payload, headers=_headers(token))
         if r.status_code >= 400:
             raise BridgeError(f"start_crawl HTTP {r.status_code}: {r.text[:300]}")
@@ -83,23 +92,33 @@ async def start_crawl(
 
 
 async def get_status(base_url: str, token: Optional[str], job_id: str) -> Dict[str, Any]:
-    async with httpx.AsyncClient(timeout=20.0) as c:
-        r = await c.get(f"{_strip(base_url)}/crawl/{job_id}", headers=_headers(token))
-        if r.status_code >= 400:
-            raise BridgeError(f"get_status HTTP {r.status_code}: {r.text[:200]}")
-        return r.json()
+    # Two-attempt retry on transient connect failures (ngrok blips)
+    last_err = None
+    for attempt in range(2):
+        try:
+            r = await _rpc_get(base_url, token, f"/crawl/{job_id}", timeout=20.0)
+            if r.status_code >= 400:
+                raise BridgeError(f"get_status HTTP {r.status_code}: {r.text[:200]}")
+            return r.json()
+        except httpx.ConnectTimeout as e:
+            last_err = e
+            if attempt == 0:
+                await asyncio.sleep(1.5)
+                continue
+            raise BridgeError("Connect timeout to bridge (ngrok blip — usually resolves on next poll)") from e
+    raise BridgeError(f"get_status failed: {last_err}")
 
 
 async def list_files(base_url: str, token: Optional[str], job_id: str) -> List[str]:
-    async with httpx.AsyncClient(timeout=20.0) as c:
-        r = await c.get(f"{_strip(base_url)}/crawl/{job_id}/files", headers=_headers(token))
-        if r.status_code >= 400:
-            raise BridgeError(f"list_files HTTP {r.status_code}: {r.text[:200]}")
-        return (r.json() or {}).get("files", [])
+    r = await _rpc_get(base_url, token, f"/crawl/{job_id}/files", timeout=30.0)
+    if r.status_code >= 400:
+        raise BridgeError(f"list_files HTTP {r.status_code}: {r.text[:200]}")
+    return (r.json() or {}).get("files", [])
 
 
 async def fetch_file(base_url: str, token: Optional[str], job_id: str, filename: str) -> str:
-    async with httpx.AsyncClient(timeout=120.0) as c:
+    timeouts = httpx.Timeout(connect=15.0, read=180.0, write=30.0, pool=15.0)
+    async with httpx.AsyncClient(timeout=timeouts) as c:
         r = await c.get(
             f"{_strip(base_url)}/crawl/{job_id}/file/{filename}",
             headers=_headers(token),

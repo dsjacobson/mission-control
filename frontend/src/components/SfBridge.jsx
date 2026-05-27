@@ -35,19 +35,34 @@ export default function SfBridge({ clientId }) {
 
   useEffect(() => { loadStatus(); }, [clientId]);
 
-  // Poll active crawl
+  // Poll active crawl (resilient — transient errors don't kill the loop)
   useEffect(() => {
     if (!activeJob) return;
     let stop = false;
+    let consecutiveErrors = 0;
     const tick = async () => {
       try {
         const r = await ax.get(`/clients/${clientId}/integrations/sf-bridge/crawl/${activeJob}`);
         if (stop) return;
+        consecutiveErrors = 0;
         setJobStatus(r.data);
-        if (["done", "completed", "failed", "error"].includes((r.data.status || "").toLowerCase())) return;
+        if (["done", "completed", "finished", "success", "failed", "error"].includes((r.data.status || "").toLowerCase())) return;
         setTimeout(tick, 4000);
       } catch (e) {
-        if (!stop) setJobStatus({ status: "error", error: e?.response?.data?.detail || "poll failed" });
+        if (stop) return;
+        consecutiveErrors += 1;
+        // Tolerate up to 5 transient errors (ngrok blips, network jitter) before
+        // marking the job as errored. Crawls often run 2-10 min.
+        if (consecutiveErrors >= 5) {
+          setJobStatus((prev) => ({
+            ...(prev || {}),
+            status: "error",
+            error: e?.response?.data?.detail || "Lost connection to bridge after multiple retries. Re-check the bridge URL / token, then poll manually.",
+          }));
+          return;
+        }
+        // Stay in current status but keep polling with backoff
+        setTimeout(tick, 6000 + consecutiveErrors * 2000);
       }
     };
     tick();
