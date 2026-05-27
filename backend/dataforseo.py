@@ -321,6 +321,7 @@ async def backlinks_bulk(urls: List[str], domains: List[str]) -> Dict[str, Dict[
             "domain_rating": dr.get("rank"),
             "page_rating": ur.get("rank"),
             "backlinks": bl.get("backlinks"),
+            "spam_score": bl.get("backlinks_spam_score"),
             "referring_domains": total_refdoms,
             "referring_domains_nofollow": nofollow_refdoms,
             "referring_domains_dofollow": dofollow_refdoms,

@@ -543,6 +543,14 @@ function BacklinkBar({ profile }) {
   // DR scaled to 0-100 (DataForSEO uses 0-1000; divide by 10 for Ahrefs-like display)
   const drScaled = dr != null ? Math.round(dr / 10) : null;
   const prScaled = pr != null ? Math.round(pr / 10) : null;
+  // Spam score: 0-100 (higher = spammier). Color: emerald <15, zinc 15-30, amber 30-50, rose 50+
+  const spam = profile.spam_score;
+  const spamTone =
+    spam == null ? "zinc"
+    : spam >= 50 ? "rose"
+    : spam >= 30 ? "amber"
+    : spam >= 15 ? "zinc"
+    : "emerald";
   return (
     <div className="flex flex-wrap items-center gap-1.5 pt-1.5 border-t border-zinc-800">
       <BLPill label="DR" value={drScaled} tone="emerald" title="Domain Rating (0-100)" />
@@ -555,6 +563,12 @@ function BacklinkBar({ profile }) {
         tone="emerald"
         title="Dofollow referring domains (total − nofollow)"
       />
+      <BLPill
+        label="Spam"
+        value={spam != null ? spam : "—"}
+        tone={spamTone}
+        title="Backlinks spam score (0-100). Higher = spammier link profile. >30 worth investigating, >50 concerning."
+      />
     </div>
   );
 }
@@ -563,6 +577,8 @@ function BLPill({ label, value, tone = "zinc", title }) {
   const toneCls =
     tone === "emerald" ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-300"
     : tone === "sky" ? "border-sky-400/30 bg-sky-400/10 text-sky-300"
+    : tone === "amber" ? "border-amber-400/30 bg-amber-400/10 text-amber-300"
+    : tone === "rose" ? "border-rose-400/30 bg-rose-400/10 text-rose-300"
     : "border-zinc-700 bg-zinc-900 text-zinc-300";
   return (
     <span title={title} className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm border ${toneCls} font-mono text-[10px]`}>
