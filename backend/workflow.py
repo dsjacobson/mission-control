@@ -424,13 +424,26 @@ async def run_workflow(db: AsyncIOMotorDatabase, run_id: str) -> None:
                     top = sorted(gsc_cache["by_page"], key=lambda x: x.get("impressions") or 0, reverse=True)[:8]
                     # Build query-by-page map (use overall top queries as proxy when per-page not available)
                     top_queries_overall = [q.get("key") for q in (gsc_cache.get("by_query") or [])[:15] if q.get("key")]
+                    urls = [p.get("key") for p in top if p.get("key")]
+                    # Look up real current title/meta/H1 from the SF page index when present
+                    sf_by_url = await screamingfrog.get_pages_by_url(db, client["id"], urls)
+                    sf_hits = 0
                     for p in top:
+                        url = p.get("key")
+                        sf = sf_by_url.get(url) or {}
+                        if sf:
+                            sf_hits += 1
                         pages_to_optimize.append({
-                            "url": p.get("key"),
+                            "url": url,
+                            "current_title": sf.get("title") or "",
+                            "current_meta": sf.get("meta_description") or "",
+                            "current_h1": sf.get("h1") or "",
                             "gsc_queries": top_queries_overall[:6],  # global signal
                             "clicks": p.get("clicks"),
                             "impressions": p.get("impressions"),
                         })
+                    if sf_hits:
+                        await _log(db, run_id, "onpage", f"Loaded current title/meta/H1 from Screaming Frog for {sf_hits}/{len(top)} pages", "info")
 
                 if pages_to_optimize:
                     await _log(db, run_id, "onpage", f"On-Page Optimizer engaged · rewriting {len(pages_to_optimize)} top pages", "info")
