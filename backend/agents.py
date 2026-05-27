@@ -35,6 +35,9 @@ AGENT_LABELS = {
     "strategy": "Strategy Agent",
     "publisher": "Publisher Assistant",
     "onpage": "On-Page Optimizer Agent",
+    "content_remediation": "Content Remediation Agent",
+    "structural_fix": "Structural Fix Agent",
+    "implementation_brief": "Implementation Brief Agent",
 }
 
 
@@ -77,8 +80,29 @@ SYSTEM_PROMPTS = {
         "recommend. For each page provided, write a finished, ready-to-paste, "
         "SEO-optimized title tag (≤60 characters), meta description (≤155 characters), "
         "H1, and 2-3 schema/markup notes. Use the page's actual GSC queries (when "
-        "given) as keyword signals. Be concrete and copy-paste ready. Output strict "
+        "given) as keyword signals. Preserve and improve on the current title/meta/H1 "
+        "when they are provided (don't blow up a working page). Be concrete and "
+        "copy-paste ready. Output strict JSON only."
+    ),
+    "content_remediation": (
+        "You are the Content Remediation Agent. For each affected URL, produce a "
+        "concrete remediation directive: target keyword(s), recommended H1, an H2/H3 "
+        "outline, suggested word count, and 3-5 talking points. Be specific to the "
+        "URL's existing context when provided (don't ignore what the page is about). "
+        "Output strict JSON only."
+    ),
+    "structural_fix": (
+        "You are the Structural Fix Agent. For each affected URL produce: the exact "
+        "change required (rewrite/redirect/canonical/remove), the destination or "
+        "value, and where in the stack the change is made (CMS, .htaccess/nginx, "
+        "sitemap, robots.txt, theme file). Be precise and prescriptive. Output strict "
         "JSON only."
+    ),
+    "implementation_brief": (
+        "You are the Implementation Brief Agent for performance + security issues. "
+        "Produce a short brief: what to change, why it matters, the suggested "
+        "implementation (with one minimal code/config snippet when relevant), "
+        "expected impact, and a verification step. Output strict JSON only."
     ),
 }
 
@@ -425,3 +449,191 @@ Order the pages identically to the input list. Use distinct keywords across page
             "gsc_impressions": src.get("impressions"),
         })
     return result
+
+
+
+# ---------- Content Remediation (placeholder content, thin content, etc.) ----------
+
+async def content_remediation(
+    run_id: str,
+    client: Dict[str, Any],
+    issue: Dict[str, Any],
+    pages: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Produce a per-URL remediation directive for content issues like Lorem Ipsum,
+    thin content, duplicate content, missing alt text, etc.
+
+    pages: [{url, title?, h1?, h2?, word_count?, content_sample?, gsc_queries?: [...]}, ...]
+    """
+    if not pages:
+        return {"urls": [], "note": "No affected URLs available."}
+    pages = pages[:25]
+    blocks = []
+    for i, p in enumerate(pages, 1):
+        blocks.append(
+            f"{i}. URL: {p.get('url')}\n"
+            f"   Current title: {p.get('title') or '(none)'}\n"
+            f"   Current H1: {p.get('h1') or '(none)'}\n"
+            f"   Current word count: {p.get('word_count') if p.get('word_count') is not None else 'unknown'}\n"
+            f"   GSC top queries (site-level): {', '.join((p.get('gsc_queries') or [])[:5]) or 'n/a'}"
+        )
+    prompt = f"""Client: {client.get('name')} · {client.get('domain')}
+Industry: {client.get('industry') or 'unspecified'}
+Goals: {client.get('goals') or 'general SEO growth'}
+
+Issue: {issue.get('title')}
+Description: {issue.get('description') or ''}
+Recommended fix: {issue.get('recommended_fix') or ''}
+
+Produce a per-URL content remediation directive. For each page propose:
+- target_keyword (single primary)
+- recommended_h1
+- outline (array of 4-7 H2/H3 entries, each with "heading" and a 1-line "intent")
+- recommended_word_count (integer)
+- talking_points (3-5 short bullets the writer must include)
+- why_this_matters (1 sentence explaining the SEO benefit)
+
+URLs:
+{chr(10).join(blocks)}
+
+Return strict JSON:
+{{
+  "urls": [
+    {{
+      "url": "string",
+      "target_keyword": "string",
+      "recommended_h1": "string",
+      "outline": [{{"heading": "string", "intent": "string"}}],
+      "recommended_word_count": 0,
+      "talking_points": ["...", "..."],
+      "why_this_matters": "string"
+    }}
+  ],
+  "summary": "string (1-2 sentences across the batch)"
+}}
+Order matches input. Keep directives unique per URL."""
+    raw = await _run_agent("content_remediation", run_id, prompt)
+    data = _safe_parse_json(raw, fallback={"urls": [], "summary": ""})
+    return data if isinstance(data, dict) else {"urls": [], "summary": ""}
+
+
+async def content_draft_for_url(
+    run_id: str,
+    client: Dict[str, Any],
+    directive: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Expand a single URL's remediation directive into full draft copy."""
+    prompt = f"""Client: {client.get('name')} · {client.get('domain')}
+Industry: {client.get('industry') or 'unspecified'}
+
+URL: {directive.get('url')}
+Target keyword: {directive.get('target_keyword')}
+Recommended H1: {directive.get('recommended_h1')}
+Outline: {json.dumps(directive.get('outline') or [], ensure_ascii=False)}
+Talking points: {json.dumps(directive.get('talking_points') or [], ensure_ascii=False)}
+Target word count: {directive.get('recommended_word_count') or 900}
+
+Write the full body content. Match the outline section-by-section. Use the H1
+as the page heading. Each H2 from the outline becomes a body section.
+
+Return strict JSON:
+{{
+  "url": "string",
+  "h1": "string",
+  "sections": [{{"h2": "string", "body": "string (3-5 paragraphs)"}}],
+  "intro": "string (2-3 sentences, before the first H2)",
+  "word_count_estimate": 0
+}}"""
+    raw = await _run_agent("publisher", run_id, prompt)
+    data = _safe_parse_json(raw, fallback={"sections": []})
+    return data if isinstance(data, dict) else {"sections": []}
+
+
+# ---------- Structural Fix (4xx, redirects, canonicals, orphans, sitemaps) ----------
+
+async def structural_fix(
+    run_id: str,
+    client: Dict[str, Any],
+    issue: Dict[str, Any],
+    pages: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    pages = pages[:30]
+    blocks = []
+    for i, p in enumerate(pages, 1):
+        blocks.append(
+            f"{i}. URL: {p.get('url')}\n"
+            f"   Status code: {p.get('status_code')} · Indexability: {p.get('indexability') or 'unknown'}\n"
+            f"   Canonical: {p.get('canonical') or '(none)'} · Inlinks: {p.get('inlinks')}"
+        )
+    blob = chr(10).join(blocks) if blocks else "(no affected URLs available)"
+    prompt = f"""Client: {client.get('name')} · {client.get('domain')}
+
+Issue: {issue.get('title')}
+Description: {issue.get('description') or ''}
+Recommended fix: {issue.get('recommended_fix') or ''}
+
+Produce a precise per-URL action plan. For each URL state:
+- action: one of [redirect_301, redirect_302, set_canonical, remove, noindex,
+  add_to_sitemap, add_internal_link, fix_link_target, fix_status_code,
+  add_hreflang, add_schema, other]
+- destination_or_value: if action is a redirect or canonical, the target URL;
+  for noindex/sitemap actions describe the change; for "other" describe it
+- where_to_make_change: one of [WordPress admin, .htaccess, nginx config,
+  sitemap.xml, robots.txt, theme template, page content, CDN config]
+- notes: 1 sentence justifying
+
+URLs:
+{blob}
+
+Return strict JSON:
+{{
+  "actions": [
+    {{
+      "url": "string",
+      "action": "string",
+      "destination_or_value": "string",
+      "where_to_make_change": "string",
+      "notes": "string"
+    }}
+  ],
+  "summary": "string (1-2 sentences)"
+}}
+If no URLs were provided, still produce 1 action describing how to find affected
+URLs and what to do once found."""
+    raw = await _run_agent("structural_fix", run_id, prompt)
+    data = _safe_parse_json(raw, fallback={"actions": [], "summary": ""})
+    return data if isinstance(data, dict) else {"actions": [], "summary": ""}
+
+
+# ---------- Implementation Brief (performance + security) ----------
+
+async def implementation_brief(
+    run_id: str,
+    client: Dict[str, Any],
+    issue: Dict[str, Any],
+    affected_url_count: int = 0,
+) -> Dict[str, Any]:
+    prompt = f"""Client: {client.get('name')} · {client.get('domain')}
+Industry: {client.get('industry') or 'unspecified'}
+
+Issue: {issue.get('title')}
+Description: {issue.get('description') or ''}
+Recommended fix: {issue.get('recommended_fix') or ''}
+Affected URLs (from Screaming Frog): {affected_url_count}
+
+Produce a short implementation brief. The user runs a small SEO agency and
+implements fixes themselves or hands off to a developer. Be concrete.
+
+Return strict JSON:
+{{
+  "what_to_change": "string (1-2 sentences, the concrete change)",
+  "why_it_matters": "string (1-2 sentences, SEO + UX impact)",
+  "implementation": "string (where to make the change — e.g. 'Add to <head> via theme header.php' or 'nginx server block')",
+  "snippet": "string (one minimal copy-paste snippet, ≤25 lines, or empty if not applicable)",
+  "snippet_language": "string (e.g. 'html', 'nginx', 'apache', 'javascript', 'css', '' if no snippet)",
+  "expected_impact": "string (1 sentence — e.g. 'Better LCP scores, ~+0.3s on mobile')",
+  "verification_step": "string (1 sentence — how to confirm the fix worked)"
+}}"""
+    raw = await _run_agent("implementation_brief", run_id, prompt)
+    data = _safe_parse_json(raw, fallback={})
+    return data if isinstance(data, dict) else {}

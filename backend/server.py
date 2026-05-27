@@ -304,6 +304,20 @@ class ContentEdit(BaseModel):
     content: Dict[str, Any]
 
 
+class DraftRequest(BaseModel):
+    url: str
+
+
+@api.post("/approvals/{approval_id}/expand-draft", response_model=Approval)
+async def expand_draft(approval_id: str, payload: DraftRequest):
+    """Expand a per-URL content remediation directive into full draft copy."""
+    try:
+        await executor.expand_content_draft(db, approval_id, payload.url)
+    except RuntimeError as e:
+        raise HTTPException(400, str(e))
+    return await db.approvals.find_one({"id": approval_id}, {"_id": 0})
+
+
 @api.put("/approvals/{approval_id}/content", response_model=Approval)
 async def edit_content(approval_id: str, payload: ContentEdit):
     result = await db.approvals.update_one(
@@ -833,8 +847,9 @@ async def sf_bridge_crawl_status(client_id: str, job_id: str):
 
 @api.post("/clients/{client_id}/integrations/sf-bridge/crawl/{job_id}/ingest")
 async def sf_bridge_ingest(client_id: str, job_id: str):
-    """Pull the Issues CSV (or first available CSV) from the bridge and feed it
-    into our existing Screaming Frog parser."""
+    """Pull all useful CSVs from the bridge: issues_overview (for the audit),
+    internal_all (to build a per-URL page index), and every bulk-issue CSV
+    (to build issue-name → affected URLs map)."""
     cfg = await sf_bridge.get_config(db, client_id)
     if not cfg:
         raise HTTPException(400, "Bridge not configured")
@@ -847,40 +862,92 @@ async def sf_bridge_ingest(client_id: str, job_id: str):
     if not files:
         raise HTTPException(400, "No CSVs available yet — wait for the crawl to finish")
 
-    # Prefer issues_overview.csv; fall back to internal_all then any CSV
-    def _rank(f):
+    def _is_issues_overview(f):
         low = f.lower()
-        if "issue" in low and "overview" in low:
-            return 0
-        if low.endswith("issues_overview.csv"):
-            return 0
-        if "issues" in low:
-            return 1
-        if "internal_all" in low:
-            return 2
-        if low.endswith(".csv"):
-            return 3
-        return 5
+        return "issues_overview" in low and low.endswith(".csv")
 
-    files.sort(key=_rank)
-    chosen = files[0]
-    try:
-        text = await sf_bridge.fetch_file(cfg["base_url"], cfg.get("token"), job_id, chosen)
-    except sf_bridge.BridgeError as e:
-        raise HTTPException(502, str(e))
-    except Exception as e:
-        raise HTTPException(502, f"Could not fetch CSV from bridge: {str(e) or type(e).__name__}")
-    parsed = screamingfrog.parse_csv(text)
-    if parsed.get("format") == "unknown":
-        raise HTTPException(400, f"Could not parse {chosen} — try a different export")
-    await screamingfrog.save_crawl(db, client_id, parsed, filename=f"bridge:{chosen}")
-    return {
-        "ok": True,
-        "ingested_file": chosen,
-        "format": parsed.get("format"),
-        "rows": parsed.get("rows"),
-        "summary": parsed.get("summary"),
-    }
+    def _is_internal_all(f):
+        low = f.lower()
+        return ("internal_all" in low or low.endswith("internal_all.csv")) and low.endswith(".csv")
+
+    issues_files = [f for f in files if _is_issues_overview(f)]
+    internal_files = [f for f in files if _is_internal_all(f)]
+    bulk_issue_files = [
+        f for f in files
+        if f.lower().endswith(".csv")
+        and "issues_reports" in f.lower()
+        and not _is_issues_overview(f)
+    ]
+
+    if not issues_files and not internal_files:
+        # Fallback to any CSV
+        files.sort()
+        issues_files = [files[0]]
+
+    response: Dict[str, Any] = {"ok": True, "ingested": {}}
+
+    # 1) Issues overview (the audit-grounding summary)
+    if issues_files:
+        chosen = issues_files[0]
+        try:
+            text = await sf_bridge.fetch_file(cfg["base_url"], cfg.get("token"), job_id, chosen)
+        except Exception as e:
+            raise HTTPException(502, f"Could not fetch {chosen}: {str(e) or type(e).__name__}")
+        parsed = screamingfrog.parse_csv(text)
+        if parsed.get("format") not in ("issues_overview", "unknown"):
+            # If we got internal_all, still save the page index
+            pass
+        if parsed.get("format") == "issues_overview":
+            await screamingfrog.save_crawl(db, client_id, parsed, filename=f"bridge:{chosen}")
+            response["ingested"]["issues_overview"] = {
+                "file": chosen,
+                "rows": parsed.get("rows"),
+                "summary": parsed.get("summary"),
+            }
+
+    # 2) Internal_all → page_index
+    if internal_files:
+        chosen = internal_files[0]
+        try:
+            text = await sf_bridge.fetch_file(cfg["base_url"], cfg.get("token"), job_id, chosen)
+        except Exception as e:
+            logger.exception("internal_all fetch failed")
+            response["ingested"]["internal_all_error"] = str(e) or type(e).__name__
+        else:
+            parsed_int = screamingfrog.parse_csv(text)
+            if parsed_int.get("format") == "internal_all":
+                await screamingfrog.save_page_index(db, client_id, parsed_int, filename=chosen)
+                response["ingested"]["internal_all"] = {
+                    "file": chosen,
+                    "rows": parsed_int.get("rows"),
+                    "page_index_size": parsed_int.get("summary", {}).get("page_index_size", 0),
+                }
+
+    # 3) Per-issue bulk URL CSVs → issue_urls map
+    if bulk_issue_files:
+        issue_urls: Dict[str, List[str]] = {}
+        for f in bulk_issue_files[:80]:  # safety cap
+            try:
+                text = await sf_bridge.fetch_file(cfg["base_url"], cfg.get("token"), job_id, f)
+            except Exception:
+                continue
+            urls = screamingfrog.parse_issue_urls_csv(text)
+            if not urls:
+                continue
+            # Derive issue key from filename: issues_reports/h1_missing.csv → "h1_missing"
+            key = f.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+            issue_urls[key] = urls[:500]
+        if issue_urls:
+            await screamingfrog.save_issue_urls(db, client_id, issue_urls)
+            response["ingested"]["issue_urls"] = {
+                "issues": len(issue_urls),
+                "total_urls": sum(len(v) for v in issue_urls.values()),
+            }
+
+    if not response["ingested"]:
+        raise HTTPException(400, "No recognisable SF CSVs found in this job")
+
+    return response
 
 
 @api.post("/clients/{client_id}/integrations/sf-bridge/disconnect")

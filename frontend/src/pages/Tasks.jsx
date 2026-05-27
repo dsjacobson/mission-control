@@ -13,6 +13,7 @@ import { Textarea } from "../components/ui/textarea";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/tabs";
 import { toast } from "sonner";
 import PageOptimizationCard from "../components/PageOptimizationCard";
+import ArtifactView from "../components/ArtifactView";
 
 const KIND_ICON = {
   content_brief: FileText,
@@ -423,7 +424,7 @@ function ArtifactBlock({ task, status, onRun, onRefresh, busy }) {
             </div>
           </div>
         ) : (
-          <ArtifactRender artifact={task.artifact} task={task} />
+          <ArtifactView artifact={task.artifact} task={task} onChanged={onRefresh} />
         )}
       </div>
     );
@@ -442,63 +443,5 @@ function ArtifactBlock({ task, status, onRun, onRefresh, busy }) {
         <Sparkles size={12} className="mr-1.5" /> Run agent to produce the fix
       </Button>
     </div>
-  );
-}
-
-function ArtifactRender({ artifact, task }) {
-  if (!artifact) return null;
-  // Page-level fixes (most common artifact shape)
-  if (artifact.kind === "page_fixes" && Array.isArray(artifact.pages)) {
-    return (
-      <div className="space-y-3">
-        {artifact.pages.map((p, i) => (
-          <PageOptimizationCard key={i} content={p} testIdPrefix={`artifact-${task.id}-p${i}`} />
-        ))}
-      </div>
-    );
-  }
-  if (artifact.kind === "no_pages") {
-    return (
-      <div className="text-xs text-amber-400 leading-relaxed">
-        <AlertCircle size={11} className="inline mr-1 -mt-0.5" />
-        {artifact.message}
-      </div>
-    );
-  }
-  // Publisher draft
-  if (artifact.kind === "publisher_draft" && artifact.draft) {
-    const d = artifact.draft;
-    return (
-      <div className="space-y-2 text-xs">
-        {d.title && <div><span className="text-zinc-500 font-mono uppercase tracking-wider text-[10px]">Title</span> · <span className="text-zinc-100">{d.title}</span></div>}
-        {d.meta_description && <div><span className="text-zinc-500 font-mono uppercase tracking-wider text-[10px]">Meta</span> · <span className="text-zinc-200">{d.meta_description}</span></div>}
-        {Array.isArray(d.outline) && (
-          <div>
-            <div className="text-zinc-500 font-mono uppercase tracking-wider text-[10px] mb-1">Outline</div>
-            <ul className="space-y-0.5">
-              {d.outline.map((h, i) => (
-                <li key={i} className="text-zinc-300">— {h.heading || h}</li>
-              ))}
-            </ul>
-          </div>
-        )}
-      </div>
-    );
-  }
-  // Strategy refresh
-  if (artifact.kind === "strategy_refresh" && artifact.strategy) {
-    return (
-      <div className="text-xs space-y-2">
-        {artifact.strategy.executive_summary && (
-          <div className="text-zinc-300 leading-relaxed">{artifact.strategy.executive_summary}</div>
-        )}
-      </div>
-    );
-  }
-  // Fallback: pretty JSON
-  return (
-    <pre className="text-xs font-mono text-zinc-300 bg-zinc-950 border border-zinc-800 rounded-sm p-3 whitespace-pre-wrap break-words max-h-64 overflow-y-auto">
-      {JSON.stringify(artifact, null, 2)}
-    </pre>
   );
 }

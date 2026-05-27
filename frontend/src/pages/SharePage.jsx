@@ -6,6 +6,7 @@ import {
 import axios from "axios";
 import { API } from "../lib/api";
 import PageOptimizationCard from "../components/PageOptimizationCard";
+import ArtifactView from "../components/ArtifactView";
 import { Toaster } from "../components/ui/sonner";
 
 const ax = axios.create({ baseURL: API });
@@ -174,11 +175,9 @@ function ShareTask({ task }) {
           </div>
           {task.summary && <div className="text-xs text-zinc-500 mt-1">{task.summary}</div>}
       {/* Agent artifact (the actual work product) takes priority when present */}
-      {task.artifact?.kind === "page_fixes" && Array.isArray(task.artifact.pages) && (
-        <div className="mt-3 space-y-3">
-          {task.artifact.pages.map((p, i) => (
-            <PageOptimizationCard key={i} content={p} />
-          ))}
+      {task.artifact && (
+        <div className="mt-3">
+          <ArtifactView artifact={task.artifact} task={task} readOnly />
         </div>
       )}
       {!task.artifact && task.kind === "page_optimization" && (
