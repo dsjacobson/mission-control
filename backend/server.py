@@ -8,7 +8,7 @@ from typing import List, Optional, Dict, Any
 
 from dotenv import load_dotenv
 from fastapi import APIRouter, FastAPI, HTTPException, Query, UploadFile, File
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, FileResponse
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel
 from starlette.middleware.cors import CORSMiddleware
@@ -32,6 +32,8 @@ from workflow import launch_workflow_task
 import gsc
 import ga
 import screamingfrog
+import semrush_csv
+import sf_bridge
 import executor
 
 ROOT_DIR = Path(__file__).parent
@@ -688,12 +690,212 @@ async def semrush_status():
     return {"configured": True, **await _sem.test_connection()}
 
 
+# ---- Semrush manual CSV uploads (per-client) ----
+
+@api.post("/clients/{client_id}/integrations/semrush/upload")
+async def semrush_csv_upload(client_id: str, file: UploadFile = File(...)):
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0, "id": 1})
+    if not client:
+        raise HTTPException(404, "Client not found")
+    if not file.filename.lower().endswith(".csv"):
+        raise HTTPException(400, "Only .csv exports are supported")
+    try:
+        raw = await file.read()
+        text = raw.decode("utf-8-sig", errors="replace")
+    except Exception:
+        raise HTTPException(400, "Could not read uploaded file")
+    parsed = semrush_csv.parse_csv(text)
+    if parsed["type"] == "unknown":
+        raise HTTPException(
+            400,
+            parsed.get("note") or "Unrecognised Semrush export — try Domain Overview, Organic Positions, Competitors, Backlinks, or Keyword Gap.",
+        )
+    if parsed["type"] == "empty":
+        raise HTTPException(400, "CSV is empty")
+    await semrush_csv.save_upload(db, client_id, parsed, filename=file.filename)
+    return {
+        "ok": True,
+        "type": parsed["type"],
+        "rows": parsed["rows"],
+        "summary": parsed["summary"],
+        "ingested_at": parsed["ingested_at"],
+    }
+
+
+@api.get("/clients/{client_id}/integrations/semrush/uploads")
+async def semrush_uploads_status(client_id: str):
+    uploads = await semrush_csv.get_uploads(db, client_id)
+    out = {}
+    for t in semrush_csv.SUPPORTED_TYPES:
+        u = uploads.get(t)
+        if u:
+            out[t] = {
+                "filename": u.get("filename"),
+                "rows": u.get("rows"),
+                "summary": u.get("summary"),
+                "ingested_at": u.get("ingested_at"),
+            }
+    return {"uploads": out, "last_uploaded_at": uploads.get("last_uploaded_at")}
+
+
+@api.delete("/clients/{client_id}/integrations/semrush/upload/{etype}")
+async def semrush_csv_clear(client_id: str, etype: str):
+    if etype not in semrush_csv.SUPPORTED_TYPES:
+        raise HTTPException(400, "Unknown export type")
+    await semrush_csv.clear_upload(db, client_id, etype)
+    return {"ok": True}
+
+
 @api.get("/integrations/dataforseo/status")
 async def dataforseo_status():
     import dataforseo as _dfs
     if not _dfs.is_configured():
         return {"configured": False, "ok": False}
     return {"configured": True, **await _dfs.test_connection()}
+
+
+# ============ Screaming Frog bridge ============
+
+class SfBridgeConfig(BaseModel):
+    base_url: str
+    token: str = ""
+
+
+@api.post("/clients/{client_id}/integrations/sf-bridge/configure")
+async def sf_bridge_configure(client_id: str, payload: SfBridgeConfig):
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0, "id": 1})
+    if not client:
+        raise HTTPException(404, "Client not found")
+    if not payload.base_url.strip():
+        raise HTTPException(400, "base_url required")
+    await sf_bridge.save_config(db, client_id, payload.base_url, payload.token)
+    return {"ok": True}
+
+
+@api.get("/clients/{client_id}/integrations/sf-bridge/status")
+async def sf_bridge_status(client_id: str):
+    cfg = await sf_bridge.get_config(db, client_id)
+    if not cfg:
+        return {"configured": False}
+    health = await sf_bridge.test_connection(cfg["base_url"], cfg.get("token"))
+    return {
+        "configured": True,
+        "base_url": cfg["base_url"],
+        "has_token": bool(cfg.get("token")),
+        **health,
+    }
+
+
+class SfCrawlRequest(BaseModel):
+    url: str
+    max_urls: int = 500
+
+
+@api.post("/clients/{client_id}/integrations/sf-bridge/crawl")
+async def sf_bridge_crawl(client_id: str, payload: SfCrawlRequest):
+    cfg = await sf_bridge.get_config(db, client_id)
+    if not cfg:
+        raise HTTPException(400, "Bridge not configured")
+    try:
+        started = await sf_bridge.start_crawl(
+            cfg["base_url"], cfg.get("token"), payload.url, max_urls=payload.max_urls,
+        )
+    except sf_bridge.BridgeError as e:
+        raise HTTPException(502, str(e))
+    job_id = started.get("job_id")
+    # Persist active job so the UI can poll
+    await db.clients.update_one(
+        {"id": client_id},
+        {"$set": {"sf_bridge.active_job": {
+            "job_id": job_id,
+            "url": payload.url,
+            "started_at": now_iso(),
+            "status": started.get("status", "running"),
+        }}},
+    )
+    return {"ok": True, "job_id": job_id, "status": started.get("status")}
+
+
+@api.get("/clients/{client_id}/integrations/sf-bridge/crawl/{job_id}")
+async def sf_bridge_crawl_status(client_id: str, job_id: str):
+    cfg = await sf_bridge.get_config(db, client_id)
+    if not cfg:
+        raise HTTPException(400, "Bridge not configured")
+    try:
+        return await sf_bridge.get_status(cfg["base_url"], cfg.get("token"), job_id)
+    except sf_bridge.BridgeError as e:
+        raise HTTPException(502, str(e))
+
+
+@api.post("/clients/{client_id}/integrations/sf-bridge/crawl/{job_id}/ingest")
+async def sf_bridge_ingest(client_id: str, job_id: str):
+    """Pull the Issues CSV (or first available CSV) from the bridge and feed it
+    into our existing Screaming Frog parser."""
+    cfg = await sf_bridge.get_config(db, client_id)
+    if not cfg:
+        raise HTTPException(400, "Bridge not configured")
+    try:
+        files = await sf_bridge.list_files(cfg["base_url"], cfg.get("token"), job_id)
+    except sf_bridge.BridgeError as e:
+        raise HTTPException(502, str(e))
+    if not files:
+        raise HTTPException(400, "No CSVs available yet — wait for the crawl to finish")
+
+    # Prefer issues_overview.csv; fall back to internal_all then any CSV
+    def _rank(f):
+        low = f.lower()
+        if "issue" in low and "overview" in low:
+            return 0
+        if low.endswith("issues_overview.csv"):
+            return 0
+        if "issues" in low:
+            return 1
+        if "internal_all" in low:
+            return 2
+        if low.endswith(".csv"):
+            return 3
+        return 5
+
+    files.sort(key=_rank)
+    chosen = files[0]
+    try:
+        text = await sf_bridge.fetch_file(cfg["base_url"], cfg.get("token"), job_id, chosen)
+    except sf_bridge.BridgeError as e:
+        raise HTTPException(502, str(e))
+    parsed = screamingfrog.parse_csv(text)
+    if parsed.get("format") == "unknown":
+        raise HTTPException(400, f"Could not parse {chosen} — try a different export")
+    await screamingfrog.save_crawl(db, client_id, parsed, filename=f"bridge:{chosen}")
+    return {
+        "ok": True,
+        "ingested_file": chosen,
+        "format": parsed.get("format"),
+        "rows": parsed.get("rows"),
+        "summary": parsed.get("summary"),
+    }
+
+
+@api.post("/clients/{client_id}/integrations/sf-bridge/disconnect")
+async def sf_bridge_disconnect(client_id: str):
+    await sf_bridge.clear_config(db, client_id)
+    return {"ok": True}
+
+
+@api.get("/integrations/sf-bridge/download")
+async def sf_bridge_download():
+    """Serve the local bridge script for the user to run on Windows."""
+    path = Path("/app/bridge/sf_bridge.py")
+    if not path.exists():
+        raise HTTPException(404, "Bridge script not found")
+    return FileResponse(str(path), media_type="text/x-python", filename="sf_bridge.py")
+
+
+@api.get("/integrations/sf-bridge/readme")
+async def sf_bridge_readme():
+    path = Path("/app/bridge/README.md")
+    if not path.exists():
+        raise HTTPException(404, "Readme not found")
+    return FileResponse(str(path), media_type="text/markdown", filename="README.md")
 
 
 # ============ Dashboard summary ============

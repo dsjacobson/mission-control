@@ -14,6 +14,7 @@ import agents
 import gsc
 import ga
 import semrush
+import semrush_csv
 import dataforseo
 import screamingfrog
 
@@ -97,7 +98,20 @@ def _build_sf_block(crawl: Dict[str, Any] | None) -> str | None:
     return "\n".join(lines)
 
 
-async def _build_semrush_competitors_block(domain: str) -> str | None:
+async def _build_semrush_competitors_block(domain: str, db=None, client_id: str | None = None) -> str | None:
+    # Prefer uploaded CSV when present (saves API quota)
+    if db and client_id:
+        try:
+            up = await semrush_csv.get_upload(db, client_id, "competitors")
+        except Exception:
+            up = None
+        if up and up.get("items"):
+            lines = [f"Semrush top organic competitors (from uploaded CSV · {up.get('filename')}):"]
+            for c in up["items"][:10]:
+                lines.append(
+                    f"  - {c.get('domain')} | rel={c.get('competitor_relevance')} | common_kw={c.get('common_keywords')} | organic_traffic={c.get('organic_traffic')}"
+                )
+            return "\n".join(lines)
     if not semrush.is_configured() or not domain:
         return None
     try:
@@ -110,6 +124,89 @@ async def _build_semrush_competitors_block(domain: str) -> str | None:
     for c in comps[:10]:
         lines.append(f"  - {c.get('Domain')} | {c.get('Competitor Relevance')} | {c.get('Common Keywords')} | {c.get('Organic Traffic')}")
     return "\n".join(lines)
+
+
+async def _build_semrush_keywords_block(domain: str, db=None, client_id: str | None = None) -> str | None:
+    """Prefer uploaded Organic Positions CSV; fall back to Semrush API."""
+    if db and client_id:
+        try:
+            up = await semrush_csv.get_upload(db, client_id, "organic_positions")
+        except Exception:
+            up = None
+        if up and up.get("items"):
+            top = up["items"][:30]
+            lines = [f"Semrush organic keywords (from uploaded CSV · {up.get('filename')}):"]
+            for k in top:
+                lines.append(
+                    f"  - {k.get('keyword')} | pos={k.get('position')} | vol={k.get('search_volume')} | traffic={k.get('traffic')} | url={k.get('url')}"
+                )
+            return "\n".join(lines)
+    if not semrush.is_configured() or not domain:
+        return None
+    try:
+        sem_kws = await semrush.domain_organic_keywords(domain, "us", limit=25)
+    except Exception:
+        return None
+    if not sem_kws:
+        return None
+    block = ["Semrush organic keywords (top 25 — Keyword | Position | Search Volume | CPC | URL):"]
+    for k in sem_kws[:25]:
+        block.append(f"  - {k.get('Keyword')} | {k.get('Position')} | {k.get('Search Volume')} | {k.get('CPC')} | {k.get('Url')}")
+    return "\n".join(block)
+
+
+async def _build_semrush_gap_block(db, client_id: str) -> str | None:
+    """Pull uploaded Keyword Gap CSV if any."""
+    try:
+        up = await semrush_csv.get_upload(db, client_id, "keyword_gap")
+    except Exception:
+        return None
+    if not up or not up.get("items"):
+        return None
+    top = up["items"][:25]
+    lines = [f"Semrush keyword gap (from uploaded CSV · {up.get('filename')}):"]
+    for k in top:
+        lines.append(
+            f"  - {k.get('keyword')} | vol={k.get('search_volume')} | cpc={k.get('cpc')} | competitor={k.get('competitor_url')} (pos {k.get('competitor_position')})"
+        )
+    return "\n".join(lines)
+
+
+async def _build_semrush_backlinks_block(db, client_id: str) -> str | None:
+    try:
+        up = await semrush_csv.get_upload(db, client_id, "backlinks")
+    except Exception:
+        return None
+    if not up or not up.get("summary"):
+        return None
+    s = up["summary"]
+    top = (up.get("items") or [])[:8]
+    lines = [
+        f"Semrush backlinks profile (uploaded CSV · {up.get('filename')}):",
+        f"  total={s.get('total_backlinks')} unique_domains≈{s.get('unique_referring_domains_approx')} follow={s.get('follow_links')} nofollow={s.get('nofollow_links')}",
+    ]
+    if top:
+        lines.append("Top referring pages (page_score | source | target | anchor):")
+        for b in top:
+            lines.append(
+                f"  - {b.get('page_score')} | {b.get('source_url')} | {b.get('target_url')} | {b.get('anchor')}"
+            )
+    return "\n".join(lines)
+
+
+async def _build_semrush_overview_block(db, client_id: str) -> str | None:
+    try:
+        up = await semrush_csv.get_upload(db, client_id, "domain_overview")
+    except Exception:
+        return None
+    if not up or not up.get("summary"):
+        return None
+    s = up["summary"]
+    return (
+        f"Semrush Domain Overview (uploaded CSV · {up.get('filename')}): "
+        f"domain={s.get('domain')} db={s.get('database')} "
+        f"organic_keywords={s.get('organic_keywords')} organic_traffic={s.get('organic_traffic')}"
+    )
 
 
 async def _build_dfs_gaps_block(client: Dict[str, Any]) -> str | None:
@@ -250,18 +347,24 @@ async def run_workflow(db: AsyncIOMotorDatabase, run_id: str) -> None:
             except Exception as e:
                 await _log(db, run_id, "keyword", f"GSC context unavailable: {e}", "warning")
 
-            # Semrush organic keywords for the client domain
+            # Semrush organic keywords for the client domain (CSV upload preferred)
             try:
-                if semrush.is_configured() and client.get("domain"):
-                    sem_kws = await semrush.domain_organic_keywords(client["domain"], "us", limit=25)
-                    if sem_kws:
-                        block = ["Semrush organic keywords (top 25 — Keyword | Position | Search Volume | CPC | URL):"]
-                        for k in sem_kws[:25]:
-                            block.append(f"  - {k.get('Keyword')} | {k.get('Position')} | {k.get('Search Volume')} | {k.get('CPC')} | {k.get('Url')}")
-                        gsc_context = (gsc_context or "") + "\n\n" + "\n".join(block)
-                        await _log(db, run_id, "keyword", f"Grounded with Semrush · {len(sem_kws)} ranked keywords", "info")
+                sem_block = await _build_semrush_keywords_block(client.get("domain", ""), db, client["id"])
+                if sem_block:
+                    gsc_context = (gsc_context or "") + "\n\n" + sem_block
+                    source = "uploaded CSV" if "uploaded CSV" in sem_block else "API"
+                    await _log(db, run_id, "keyword", f"Grounded with Semrush organic positions ({source})", "info")
             except Exception as e:
                 await _log(db, run_id, "keyword", f"Semrush unavailable: {e}", "warning")
+
+            # Optional uploaded keyword gap CSV is also useful here
+            try:
+                gap_block = await _build_semrush_gap_block(db, client["id"])
+                if gap_block:
+                    gsc_context = (gsc_context or "") + "\n\n" + gap_block
+                    await _log(db, run_id, "keyword", "Grounded with Semrush keyword gap (uploaded CSV)", "info")
+            except Exception:
+                pass
 
             results = await agents.keyword_research(run_id, client, objective, gsc_context=gsc_context)
 
@@ -343,16 +446,22 @@ async def run_workflow(db: AsyncIOMotorDatabase, run_id: str) -> None:
         elif rtype == "competitor_analysis":
             comp_context = None
             try:
-                if semrush.is_configured() and client.get("domain"):
-                    sem_comps = await semrush.domain_competitors(client["domain"], "us", limit=10)
-                    if sem_comps:
-                        block = ["Semrush top organic competitors (Domain | Competitor Relevance | Common Keywords | Organic Traffic):"]
-                        for c in sem_comps[:10]:
-                            block.append(f"  - {c.get('Domain')} | {c.get('Competitor Relevance')} | {c.get('Common Keywords')} | {c.get('Organic Traffic')}")
-                        comp_context = "\n".join(block)
-                        await _log(db, run_id, "competitor", f"Grounded with Semrush · {len(sem_comps)} competitors", "info")
+                cb = await _build_semrush_competitors_block(client.get("domain", ""), db, client["id"])
+                if cb:
+                    comp_context = cb
+                    src = "uploaded CSV" if "uploaded CSV" in cb else "API"
+                    await _log(db, run_id, "competitor", f"Grounded with Semrush competitors ({src})", "info")
             except Exception as e:
                 await _log(db, run_id, "competitor", f"Semrush unavailable: {e}", "warning")
+
+            # Uploaded keyword gap CSV (no API cost)
+            try:
+                gap_block = await _build_semrush_gap_block(db, client["id"])
+                if gap_block:
+                    comp_context = (comp_context or "") + "\n\n" + gap_block
+                    await _log(db, run_id, "competitor", "Grounded with Semrush keyword gap (uploaded CSV)", "success")
+            except Exception:
+                pass
 
             # DataForSEO keyword gaps for each user-tracked competitor
             try:
@@ -395,7 +504,31 @@ async def run_workflow(db: AsyncIOMotorDatabase, run_id: str) -> None:
             except Exception:
                 pass
             try:
-                b = await _build_semrush_competitors_block(client.get("domain", ""))
+                b = await _build_semrush_competitors_block(client.get("domain", ""), db, client["id"])
+                if b:
+                    blocks.append(b)
+            except Exception:
+                pass
+            try:
+                b = await _build_semrush_keywords_block(client.get("domain", ""), db, client["id"])
+                if b:
+                    blocks.append(b)
+            except Exception:
+                pass
+            try:
+                b = await _build_semrush_gap_block(db, client["id"])
+                if b:
+                    blocks.append(b)
+            except Exception:
+                pass
+            try:
+                b = await _build_semrush_backlinks_block(db, client["id"])
+                if b:
+                    blocks.append(b)
+            except Exception:
+                pass
+            try:
+                b = await _build_semrush_overview_block(db, client["id"])
                 if b:
                     blocks.append(b)
             except Exception:

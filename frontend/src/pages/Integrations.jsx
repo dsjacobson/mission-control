@@ -12,6 +12,8 @@ import { toast } from "sonner";
 import GscConnect from "../components/GscConnect";
 import GaConnect from "../components/GaConnect";
 import ScreamingFrogUpload from "../components/ScreamingFrogUpload";
+import SfBridge from "../components/SfBridge";
+import SemrushUpload from "../components/SemrushUpload";
 import IntegrationStatusCard from "../components/IntegrationStatusCard";
 
 const FIELDS = [
@@ -78,8 +80,11 @@ export default function Integrations() {
         <GaConnect clientId={clientId} />
       </Section>
 
-      <Section title="Screaming Frog crawl" description="Upload an SEO Spider CSV export to ground the Technical Audit agent in real crawl data." testId="sf-section">
-        <ScreamingFrogUpload clientId={clientId} />
+      <Section title="Screaming Frog crawl" description="Two options — upload a one-off CSV export, or connect a live bridge to run crawls from the cloud." testId="sf-section">
+        <div className="space-y-4">
+          <SfBridge clientId={clientId} />
+          <ScreamingFrogUpload clientId={clientId} />
+        </div>
       </Section>
 
       <Section title="SEO data providers" description="Server-wide connections used by every client workspace." testId="seo-data-section">
@@ -100,6 +105,9 @@ export default function Integrations() {
             statusPath="dataforseo"
             hint="Used for: bulk keyword difficulty scoring + per-competitor keyword gap analysis."
           />
+        </div>
+        <div className="mt-4">
+          <SemrushUpload clientId={clientId} />
         </div>
       </Section>
 
