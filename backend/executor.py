@@ -75,10 +75,11 @@ async def _resolve_pages_for_issue(
     pages: List[Dict[str, Any]] = []
     top_queries = await _gsc_top_queries(db, client_id)
     if urls:
-        sf_pages = await screamingfrog.get_pages_for_urls(db, client_id, urls[:limit])
-        for sf in sf_pages:
+        sf_by_url = await screamingfrog.get_pages_by_url(db, client_id, urls[:limit])
+        for u in urls[:limit]:
+            sf = sf_by_url.get(u) or {}
             pages.append({
-                "url": sf.get("url"),
+                "url": u,
                 "current_title": sf.get("title") or "",
                 "current_meta": sf.get("meta_description") or "",
                 "current_h1": sf.get("h1") or "",
@@ -93,16 +94,10 @@ async def _resolve_pages_for_issue(
                 "inlinks": sf.get("inlinks"),
                 "gsc_queries": top_queries[:6],
             })
-        # If we matched issue URLs but they're not in the page index, still pass them through
-        if not pages:
-            for u in urls[:limit]:
-                pages.append({"url": u, "gsc_queries": top_queries[:6]})
     if not pages and fallback_to_gsc:
         gsc_pages = await _top_gsc_pages(db, client_id, limit=limit)
-        # Enrich with SF page detail if present
         urls = [p["url"] for p in gsc_pages]
-        sf_pages = await screamingfrog.get_pages_for_urls(db, client_id, urls)
-        sf_by_url = {p.get("url"): p for p in sf_pages if p.get("url")}
+        sf_by_url = await screamingfrog.get_pages_by_url(db, client_id, urls)
         for p in gsc_pages:
             sf = sf_by_url.get(p["url"]) or {}
             pages.append({

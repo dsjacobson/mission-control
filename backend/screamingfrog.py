@@ -221,6 +221,19 @@ async def save_page_index(db, client_id: str, parsed: Dict[str, Any], filename: 
     )
 
 
+def _normalize_url(u: str) -> str:
+    """Aggressive URL normalization for matching: strip protocol, www, fragment, trailing slash, lowercase."""
+    if not u:
+        return ""
+    s = u.strip().lower()
+    s = re.sub(r"^https?://", "", s)
+    if s.startswith("www."):
+        s = s[4:]
+    s = s.split("#", 1)[0]
+    s = s.rstrip("/")
+    return s
+
+
 async def get_page_for_url(db, client_id: str, url: str) -> Optional[Dict[str, Any]]:
     """Look up one URL in the stored page index."""
     if not url:
@@ -230,39 +243,50 @@ async def get_page_for_url(db, client_id: str, url: str) -> Optional[Dict[str, A
         {"_id": 0, "screaming_frog.page_index": 1},
     )
     pages = ((doc or {}).get("screaming_frog") or {}).get("page_index") or []
-    # exact match first, then normalized (trailing slash / scheme tolerance)
+    if not pages:
+        return None
     by_url = {p.get("url"): p for p in pages if p.get("url")}
     if url in by_url:
         return by_url[url]
-    norm = url.rstrip("/").lower()
+    target = _normalize_url(url)
     for u, p in by_url.items():
-        if u and u.rstrip("/").lower() == norm:
+        if _normalize_url(u) == target:
             return p
     return None
 
 
-async def get_pages_for_urls(db, client_id: str, urls: List[str]) -> List[Dict[str, Any]]:
-    """Bulk lookup. Returns pages in the same order as urls (missing → None entries skipped)."""
+async def get_pages_by_url(db, client_id: str, urls: List[str]) -> Dict[str, Dict[str, Any]]:
+    """Bulk lookup. Returns dict keyed by the *input* URL → SF page detail.
+    Caller passes a list of URLs (e.g. from GSC or from a bulk-issue CSV) and
+    receives back a map so they can pair each input URL with its enriched SF data."""
     if not urls:
-        return []
+        return {}
     doc = await db.clients.find_one(
         {"id": client_id},
         {"_id": 0, "screaming_frog.page_index": 1},
     )
     pages = ((doc or {}).get("screaming_frog") or {}).get("page_index") or []
-    by_url = {p.get("url"): p for p in pages if p.get("url")}
-    norm_map = {u.rstrip("/").lower(): u for u in by_url}
-    out: List[Dict[str, Any]] = []
+    if not pages:
+        return {}
+    by_norm = {}
+    for p in pages:
+        u = p.get("url")
+        if u:
+            by_norm[_normalize_url(u)] = p
+    out: Dict[str, Dict[str, Any]] = {}
     for url in urls:
         if not url:
             continue
-        if url in by_url:
-            out.append(by_url[url])
-            continue
-        k = url.rstrip("/").lower()
-        if k in norm_map:
-            out.append(by_url[norm_map[k]])
+        key = _normalize_url(url)
+        if key in by_norm:
+            out[url] = by_norm[key]
     return out
+
+
+async def get_pages_for_urls(db, client_id: str, urls: List[str]) -> List[Dict[str, Any]]:
+    """Legacy helper — returns a list (loses input→output mapping). Prefer get_pages_by_url."""
+    mapping = await get_pages_by_url(db, client_id, urls)
+    return list(mapping.values())
 
 
 async def save_issue_urls(db, client_id: str, issue_url_map: Dict[str, List[str]]) -> None:
@@ -282,6 +306,8 @@ async def get_urls_for_issue(db, client_id: str, issue_name: str, limit: int = 5
         {"_id": 0, "screaming_frog.issue_urls": 1},
     )
     issue_urls = ((doc or {}).get("screaming_frog") or {}).get("issue_urls") or {}
+    if not issue_urls:
+        return []
     target = issue_name.lower().strip()
     # exact
     if issue_name in issue_urls:
@@ -290,17 +316,25 @@ async def get_urls_for_issue(db, client_id: str, issue_name: str, limit: int = 5
     for k, v in issue_urls.items():
         if k.lower() == target:
             return v[:limit]
-    # token overlap (e.g., "Missing H1" ↔ "h1_missing")
-    target_tokens = {t for t in re.split(r"[^a-z0-9]+", target) if len(t) > 2}
+    # Derive SF-style snake_case key and compare directly
+    sf_key = re.sub(r"[^a-z0-9]+", "_", target).strip("_")
+    if sf_key in issue_urls:
+        return issue_urls[sf_key][:limit]
+    for k, v in issue_urls.items():
+        if k.lower() == sf_key:
+            return v[:limit]
+    # Token overlap (keep short tokens like h1, h2, css, 4xx, 404, ssl)
+    target_tokens = {t for t in re.split(r"[^a-z0-9]+", target) if t and t not in {"the", "and", "a", "of", "to", "is", "in", "on", "or", "by", "for"}}
     if not target_tokens:
         return []
     best: tuple = (0, [])
     for k, v in issue_urls.items():
-        ktokens = {t for t in re.split(r"[^a-z0-9]+", k.lower()) if len(t) > 2}
+        ktokens = {t for t in re.split(r"[^a-z0-9]+", k.lower()) if t}
         overlap = len(target_tokens & ktokens)
         if overlap > best[0]:
             best = (overlap, v)
-    return (best[1] or [])[:limit] if best[0] >= 2 else []
+    # Require at least 1 token overlap (we already filtered stop-words above)
+    return (best[1] or [])[:limit] if best[0] >= 1 else []
 
 
 def parse_issue_urls_csv(text: str) -> List[str]:
