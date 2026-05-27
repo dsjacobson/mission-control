@@ -27,7 +27,9 @@ import screamingfrog
 
 CANNIBAL_GSC_IMPR_THRESHOLD = 30      # Require this many impressions on a 2nd URL to count it
 CANNIBAL_GSC_POS_THRESHOLD = 30.0     # Within first 30 positions
-UNDER_OPT_POS_THRESHOLD = 5.0         # Position > 5 = under-optimized opportunity
+ALIGNED_POS_THRESHOLD = 5.0           # Position ≤ 5 = aligned (regardless of traffic data)
+UNDER_OPT_POS_THRESHOLD = 5.0         # Position > 5 = opportunity to optimize
+LOW_POSITION_THRESHOLD = 20.0         # Position > 20 = ranking poorly, needs real work
 UNDER_OPT_IMPR = 100                  # Only flag if there's actual impression volume
 
 
@@ -80,13 +82,22 @@ def _merge_from_semrush_positions(kw_map: Dict[str, Any], positions_upload: Opti
             continue
         slot = kw_map.setdefault(kw, {"keyword": kw, "sources": {}})
         slot["sources"]["semrush_pos"] = True
+        # Track every Semrush ranking URL (needed for cannibalization detection)
+        sem_urls = slot.setdefault("semrush_urls", [])
+        url = item.get("url")
+        if url:
+            sem_urls.append({
+                "url": url,
+                "position": item.get("position"),
+                "traffic": item.get("traffic"),
+            })
         # Prefer Semrush position when GSC position missing or worse
         sem_pos = item.get("position")
         if sem_pos is not None and (slot.get("current_position") is None or (sem_pos and sem_pos < slot.get("current_position", 999))):
             slot["current_position"] = sem_pos
-            slot["current_url"] = slot.get("current_url") or item.get("url")
+            slot["current_url"] = url or slot.get("current_url")
         if not slot.get("current_url"):
-            slot["current_url"] = item.get("url")
+            slot["current_url"] = url
         if not slot.get("search_volume") and item.get("search_volume"):
             slot["search_volume"] = item.get("search_volume")
         if not slot.get("intent") and item.get("intent"):
@@ -118,24 +129,34 @@ def _classify_status(slot: Dict[str, Any], per_kw_gsc: Dict[str, List[Dict[str, 
     kw = slot["keyword"]
     has_current = bool(slot.get("current_url"))
     pos = slot.get("current_position")
-    impressions = slot.get("impressions") or 0
     has_competitor_only = (
         slot.get("sources", {}).get("semrush_gap")
         and not slot.get("sources", {}).get("semrush_pos")
         and not slot.get("sources", {}).get("gsc")
     )
 
-    # 1. Cannibalization — multiple client URLs ranking for the same query
-    competing_urls = [
+    # 1. Cannibalization from GSC (multiple client URLs ranking)
+    competing_urls_gsc = [
         u for u in per_kw_gsc.get(kw, [])
         if (u.get("impressions") or 0) >= CANNIBAL_GSC_IMPR_THRESHOLD
         and (u.get("position") or 999) <= CANNIBAL_GSC_POS_THRESHOLD
     ]
-    if len({u.get("page") for u in competing_urls if u.get("page")}) >= 2:
+    if len({u.get("page") for u in competing_urls_gsc if u.get("page")}) >= 2:
         slot["status"] = "cannibalized"
         slot["cannibal_urls"] = sorted(
-            [{"url": u.get("page"), "clicks": u.get("clicks"), "impressions": u.get("impressions"), "position": u.get("position")} for u in competing_urls],
+            [{"url": u.get("page"), "clicks": u.get("clicks"), "impressions": u.get("impressions"), "position": u.get("position")} for u in competing_urls_gsc],
             key=lambda x: (x.get("clicks") or 0), reverse=True,
+        )[:5]
+        return
+
+    # 1b. Cannibalization from Semrush positions (same keyword, multiple of our URLs ranking)
+    sem_urls = slot.get("semrush_urls") or []
+    unique_sem_urls = {u.get("url"): u for u in sem_urls if u.get("url")}
+    if len(unique_sem_urls) >= 2:
+        slot["status"] = "cannibalized"
+        slot["cannibal_urls"] = sorted(
+            [{"url": u.get("url"), "position": u.get("position"), "traffic": u.get("traffic")} for u in unique_sem_urls.values()],
+            key=lambda x: (x.get("position") or 999),
         )[:5]
         return
 
@@ -144,16 +165,18 @@ def _classify_status(slot: Dict[str, Any], per_kw_gsc: Dict[str, List[Dict[str, 
         slot["status"] = "missing_page"
         return
 
-    # 3. Under-optimized — we rank but not well
-    if pos is not None and pos > UNDER_OPT_POS_THRESHOLD and impressions >= UNDER_OPT_IMPR:
-        slot["status"] = "under_optimized"
+    # 3. Position-based classification (works with Semrush-only OR GSC data)
+    if pos is not None:
+        if pos <= ALIGNED_POS_THRESHOLD:
+            slot["status"] = "aligned"
+            return
+        if pos <= LOW_POSITION_THRESHOLD:
+            slot["status"] = "under_optimized"
+            return
+        slot["status"] = "low_position"
         return
 
-    # 4. Aligned (top 5, real traffic)
-    if has_current:
-        slot["status"] = "aligned"
-        return
-
+    # 4. No position info → can't tell
     slot["status"] = "missing_page"
 
 

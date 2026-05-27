@@ -16,6 +16,7 @@ const STATUS_TONE = {
   wrong_page:        { label: "Wrong page",       cls: "border-amber-400/30 bg-amber-400/10 text-amber-300",      icon: ChevronRight },
   missing_page:      { label: "Missing page",     cls: "border-sky-400/30 bg-sky-400/10 text-sky-300",            icon: Globe },
   under_optimized:   { label: "Under-optimized",  cls: "border-violet-400/30 bg-violet-400/10 text-violet-300",   icon: TrendingDown },
+  low_position:      { label: "Low position",     cls: "border-zinc-500/40 bg-zinc-700/30 text-zinc-300",         icon: TrendingDown },
   unknown:           { label: "Unknown",          cls: "border-zinc-700 bg-zinc-900 text-zinc-400",               icon: Scan },
 };
 

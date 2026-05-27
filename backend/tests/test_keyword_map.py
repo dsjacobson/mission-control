@@ -72,3 +72,38 @@ def test_merge_gap_attaches_competitor_urls():
     assert slot["search_volume"] == 1000
     assert slot["sources"]["semrush_gap"]
     assert slot["competitor_urls"][0]["url"] == "comp.com/p"
+
+
+def test_semrush_only_cannibalization():
+    """Two of our URLs ranking for the same keyword in Semrush = cannibalization."""
+    kw_map = {}
+    upload = {"items": [
+        {"keyword": "cassata", "position": 8, "url": "https://x.com/a", "search_volume": 1000},
+        {"keyword": "cassata", "position": 14, "url": "https://x.com/b", "search_volume": 1000},
+    ]}
+    km._merge_from_semrush_positions(kw_map, upload)
+    slot = kw_map["cassata"]
+    km._classify_status(slot, {})  # no GSC data
+    assert slot["status"] == "cannibalized"
+    assert len(slot["cannibal_urls"]) == 2
+
+
+def test_classify_low_position_without_gsc():
+    """Without GSC, pos > 20 should be 'low_position', not 'aligned'."""
+    slot = {"keyword": "k", "current_url": "https://x.com/a", "current_position": 25, "sources": {"semrush_pos": True}, "semrush_urls": [{"url": "https://x.com/a", "position": 25}]}
+    km._classify_status(slot, {})
+    assert slot["status"] == "low_position"
+
+
+def test_classify_under_optimized_without_gsc():
+    """Position 6-20 should be under_optimized even without GSC impressions data."""
+    slot = {"keyword": "k", "current_url": "https://x.com/a", "current_position": 12, "sources": {"semrush_pos": True}, "semrush_urls": [{"url": "https://x.com/a", "position": 12}]}
+    km._classify_status(slot, {})
+    assert slot["status"] == "under_optimized"
+
+
+def test_classify_aligned_top5_no_traffic_data():
+    """Position 1-5 should still be aligned even without traffic data."""
+    slot = {"keyword": "k", "current_url": "https://x.com/a", "current_position": 3, "sources": {"semrush_pos": True}, "semrush_urls": [{"url": "https://x.com/a", "position": 3}]}
+    km._classify_status(slot, {})
+    assert slot["status"] == "aligned"
