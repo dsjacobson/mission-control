@@ -174,7 +174,87 @@ async def ranked_keywords(
     return out
 
 
-async def test_connection() -> Dict[str, Any]:
+async def keyword_suggestions(
+    seed: str,
+    location_code: int = DEFAULT_LOCATION_CODE,
+    language_code: str = DEFAULT_LANGUAGE_CODE,
+    limit: int = 30,
+) -> List[Dict[str, Any]]:
+    """Related keyword variations for a seed phrase, with volume + intent."""
+    if not seed:
+        return []
+    payload = [{
+        "keyword": seed,
+        "location_code": location_code,
+        "language_code": language_code,
+        "limit": limit,
+        "include_seed_keyword": True,
+        "include_serp_info": False,
+    }]
+    body = await _post("/dataforseo_labs/google/keyword_suggestions/live", payload)
+    items = _first_result(body)
+    if items and isinstance(items[0], dict) and "items" in items[0]:
+        items = items[0].get("items") or []
+    out = []
+    for it in items:
+        kw_data = it.get("keyword_data") or it
+        kw_info = kw_data.get("keyword_info") or {}
+        out.append({
+            "keyword": kw_data.get("keyword"),
+            "search_volume": kw_info.get("search_volume"),
+            "cpc": kw_info.get("cpc"),
+            "competition": kw_info.get("competition"),
+            "keyword_difficulty": (kw_data.get("keyword_properties") or {}).get("keyword_difficulty"),
+            "intent": ((kw_data.get("search_intent_info") or {}).get("main_intent")),
+        })
+    return out
+
+
+async def serp_top10(
+    keyword: str,
+    location_code: int = DEFAULT_LOCATION_CODE,
+    language_code: str = DEFAULT_LANGUAGE_CODE,
+) -> Dict[str, Any]:
+    """Live SERP top-10 + SERP features for a keyword via Google Organic Live Regular."""
+    if not keyword:
+        return {}
+    payload = [{
+        "keyword": keyword,
+        "location_code": location_code,
+        "language_code": language_code,
+        "depth": 10,
+    }]
+    body = await _post("/serp/google/organic/live/regular", payload)
+    items = _first_result(body)
+    if not items:
+        return {}
+    head = items[0] if isinstance(items, list) else items
+    raw_items = head.get("items") or []
+    organic = []
+    features = []
+    for it in raw_items:
+        t = it.get("type")
+        if t == "organic":
+            organic.append({
+                "rank": it.get("rank_absolute"),
+                "url": it.get("url"),
+                "title": it.get("title"),
+                "snippet": (it.get("description") or "")[:240],
+                "domain": it.get("domain"),
+            })
+        elif t in ("featured_snippet", "people_also_ask", "video", "images", "ai_overview", "knowledge_graph"):
+            features.append(t)
+    return {
+        "keyword": keyword,
+        "se_results_count": head.get("se_results_count"),
+        "spell": head.get("spell"),
+        "organic": organic[:10],
+        "features": sorted(set(features)),
+        "fetched_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
+    }
+
+
+
     if not is_configured():
         return {"ok": False, "error": "not configured"}
     try:

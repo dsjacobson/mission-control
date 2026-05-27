@@ -79,6 +79,20 @@ export const api = {
 
   // Dashboard
   dashboardSummary: () => client.get("/dashboard/summary").then((r) => r.data),
+
+  // Keyword map
+  buildKeywordMap: (clientId) =>
+    client.post(`/clients/${clientId}/keyword-map/build`).then((r) => r.data),
+  getKeywordMap: (clientId) =>
+    client.get(`/clients/${clientId}/keyword-map`).then((r) => r.data),
+  updateKeyword: (clientId, keyword, payload) =>
+    client.patch(`/clients/${clientId}/keyword-map/${encodeURIComponent(keyword)}`, payload).then((r) => r.data),
+  getSparseUrls: (clientId, limit = 50) =>
+    client.get(`/clients/${clientId}/keyword-map/sparse-urls`, { params: { limit } }).then((r) => r.data),
+  analyzePages: (clientId, urls) =>
+    client.post(`/clients/${clientId}/keyword-map/analyze-page`, { urls }).then((r) => r.data),
+  fetchSerp: (clientId, keyword) =>
+    client.post(`/clients/${clientId}/keyword-map/serp`, { keyword }).then((r) => r.data),
 };
 
 export default api;

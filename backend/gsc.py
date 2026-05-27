@@ -291,12 +291,15 @@ async def pull_28d_performance(
     end_date = today - timedelta(days=3)
     start_date = end_date - timedelta(days=27)
 
-    # Pull two slices: by query, by page. Keep it light.
+    # Pull three slices: by query, by page, and joint query+page (for cannibalization).
     by_query = await query_search_analytics(
         access_token, site_url, start_date, end_date, ["query"], row_limit=500
     )
     by_page = await query_search_analytics(
         access_token, site_url, start_date, end_date, ["page"], row_limit=200
+    )
+    by_query_page = await query_search_analytics(
+        access_token, site_url, start_date, end_date, ["query", "page"], row_limit=2000
     )
 
     def _norm(rows):
@@ -311,12 +314,27 @@ async def pull_28d_performance(
             })
         return out
 
+    def _norm_qp(rows):
+        out = []
+        for r in rows or []:
+            keys = r.get("keys") or [None, None]
+            out.append({
+                "query": keys[0],
+                "page": keys[1] if len(keys) > 1 else None,
+                "clicks": r.get("clicks", 0),
+                "impressions": r.get("impressions", 0),
+                "ctr": round(float(r.get("ctr", 0)) * 100, 2),
+                "position": round(float(r.get("position", 0)), 1),
+            })
+        return out
+
     cache = {
         "site_url": site_url,
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
         "by_query": _norm(by_query.get("rows")),
         "by_page": _norm(by_page.get("rows")),
+        "by_query_page": _norm_qp(by_query_page.get("rows")),
         "totals": {
             "queries": len(by_query.get("rows") or []),
             "pages": len(by_page.get("rows") or []),

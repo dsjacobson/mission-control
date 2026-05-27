@@ -38,6 +38,7 @@ AGENT_LABELS = {
     "content_remediation": "Content Remediation Agent",
     "structural_fix": "Structural Fix Agent",
     "implementation_brief": "Implementation Brief Agent",
+    "page_keyword": "Page Keyword Analyst",
 }
 
 
@@ -103,6 +104,12 @@ SYSTEM_PROMPTS = {
         "Produce a short brief: what to change, why it matters, the suggested "
         "implementation (with one minimal code/config snippet when relevant), "
         "expected impact, and a verification step. Output strict JSON only."
+    ),
+    "page_keyword": (
+        "You are the Page Keyword Analyst. Given a page's title, headings, and a "
+        "body sample, identify the single primary target keyword the page is best "
+        "positioned to rank for in Google. Pick the most specific phrase that the "
+        "page's content genuinely covers, in lowercase. Output strict JSON only."
     ),
 }
 
@@ -637,3 +644,40 @@ Return strict JSON:
     raw = await _run_agent("implementation_brief", run_id, prompt)
     data = _safe_parse_json(raw, fallback={})
     return data if isinstance(data, dict) else {}
+
+
+# ---------- Page Keyword Analyst (for sparse pages) ----------
+
+async def identify_primary_keyword(
+    run_id: str,
+    client: Dict[str, Any],
+    page: Dict[str, Any],
+) -> str:
+    """Given a page's title/headings/body sample, return the single best primary
+    keyword guess (lowercase). Returns "" if it can't decide."""
+    body = (page.get("body_sample") or "")[:4000]
+    prompt = f"""Client: {client.get('name')} · {client.get('domain')}
+Industry: {client.get('industry') or 'unspecified'}
+
+Page URL: {page.get('url')}
+Title: {page.get('title') or '(missing)'}
+Meta: {page.get('meta') or '(missing)'}
+H1: {", ".join(page.get('h1') or []) or '(missing)'}
+H2: {", ".join(page.get('h2') or [])[:400]}
+Body sample (first 4000 chars):
+{body}
+
+What single primary keyword phrase would this page realistically rank for in
+Google today? Pick the most specific phrase the body genuinely covers — not
+something aspirational. Lowercase. 1-5 words.
+
+Return strict JSON:
+{{
+  "primary_keyword": "string",
+  "alternates": ["string", "string"],
+  "confidence": 0.0
+}}"""
+    raw = await _run_agent("page_keyword", run_id, prompt)
+    data = _safe_parse_json(raw, fallback={"primary_keyword": ""})
+    return (data.get("primary_keyword") or "").strip().lower() if isinstance(data, dict) else ""
+

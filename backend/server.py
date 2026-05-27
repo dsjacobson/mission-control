@@ -35,6 +35,9 @@ import screamingfrog
 import semrush_csv
 import sf_bridge
 import executor
+import keyword_map as kw_map_lib
+import page_analyzer
+import dataforseo as dfs_lib
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -989,6 +992,102 @@ async def dashboard_summary():
         "pending_approvals": pending_approvals,
         "recent_runs": recent_runs,
     }
+
+
+# ============ Keyword Map ============
+
+class KwUpdate(BaseModel):
+    target_url: Optional[str] = None
+    priority: Optional[bool] = None
+    status: Optional[str] = None
+
+
+class AnalyzePagesRequest(BaseModel):
+    urls: List[str]
+
+
+class SerpRequest(BaseModel):
+    keyword: str
+
+
+SERP_KEYWORD_CAP = 500  # Hard safety cap per the user
+
+
+@api.post("/clients/{client_id}/keyword-map/build")
+async def keyword_map_build(client_id: str):
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0})
+    if not client:
+        raise HTTPException(404, "Client not found")
+    map_doc = await kw_map_lib.build_keyword_map(db, client)
+    return {"ok": True, "stats": map_doc.get("stats"), "built_at": map_doc.get("built_at")}
+
+
+@api.get("/clients/{client_id}/keyword-map")
+async def keyword_map_get(client_id: str):
+    return await kw_map_lib.get_keyword_map(db, client_id)
+
+
+@api.patch("/clients/{client_id}/keyword-map/{keyword:path}")
+async def keyword_map_update(client_id: str, keyword: str, payload: KwUpdate):
+    updated = await kw_map_lib.update_keyword(
+        db, client_id, keyword,
+        target_url=payload.target_url,
+        priority=payload.priority,
+        status=payload.status,
+    )
+    return updated
+
+
+@api.get("/clients/{client_id}/keyword-map/sparse-urls")
+async def keyword_map_sparse(client_id: str, limit: int = 50):
+    urls = await kw_map_lib.sparse_urls(db, client_id, limit=limit)
+    return {"urls": urls, "total": len(urls)}
+
+
+@api.post("/clients/{client_id}/keyword-map/analyze-page")
+async def keyword_map_analyze_page(client_id: str, payload: AnalyzePagesRequest):
+    """Run page-first keyword analysis on one or more URLs."""
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0})
+    if not client:
+        raise HTTPException(404, "Client not found")
+    if not payload.urls:
+        raise HTTPException(400, "No URLs provided")
+    if len(payload.urls) > 25:
+        raise HTTPException(400, "Cap is 25 URLs per call")
+    results = []
+    for url in payload.urls:
+        try:
+            res = await page_analyzer.analyze_page(db, client, url)
+            if res.get("ok"):
+                await kw_map_lib.attach_page_suggestion(
+                    db, client_id, url,
+                    primary_keyword=res.get("primary_keyword_guess", ""),
+                    related_keywords=res.get("related_keywords", []),
+                    recommended_keyword=res.get("recommended_keyword", ""),
+                )
+            results.append(res)
+        except Exception as e:
+            results.append({"url": url, "ok": False, "error": str(e)})
+    return {"results": results}
+
+
+@api.post("/clients/{client_id}/keyword-map/serp")
+async def keyword_map_serp(client_id: str, payload: SerpRequest):
+    """Pull live SERP top-10 for a single keyword via DataForSEO and attach to the map."""
+    if not dfs_lib.is_configured():
+        raise HTTPException(400, "DataForSEO is not configured")
+    # Check cap
+    map_doc = await kw_map_lib.get_keyword_map(db, client_id)
+    serp_count = sum(1 for k in (map_doc.get("keywords") or {}).values() if k.get("serp"))
+    if serp_count >= SERP_KEYWORD_CAP:
+        raise HTTPException(429, f"SERP fetch cap reached ({SERP_KEYWORD_CAP}). Clear some or raise the cap.")
+    serp = await dfs_lib.serp_top10(payload.keyword)
+    if not serp.get("organic"):
+        raise HTTPException(502, "DataForSEO returned no SERP results")
+    await kw_map_lib.attach_serp_landscape(db, client_id, payload.keyword, serp)
+    return {"ok": True, "serp": serp}
+
+
 
 
 # ============ App wiring ============

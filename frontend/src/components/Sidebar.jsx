@@ -12,6 +12,7 @@ import {
   CircleDot,
   ChevronDown,
   PackageCheck,
+  Map,
 } from "lucide-react";
 import { useClients } from "../lib/ClientContext";
 import {
@@ -33,6 +34,7 @@ const navTop = [
 const clientNav = (id) => [
   { to: `/clients/${id}`, label: "Workspace", icon: LayoutDashboard, testid: "nav-client-workspace", end: true },
   { to: `/clients/${id}/workflows`, label: "Workflows", icon: Workflow, testid: "nav-client-workflows" },
+  { to: `/clients/${id}/keyword-map`, label: "Keyword Map", icon: Map, testid: "nav-client-keyword-map" },
   { to: `/clients/${id}/tasks`, label: "Tasks", icon: ListTodo, testid: "nav-client-tasks" },
   { to: `/clients/${id}/deliverables`, label: "Deliverables", icon: PackageCheck, testid: "nav-client-deliverables" },
   { to: `/clients/${id}/competitors`, label: "Competitors", icon: Target, testid: "nav-client-competitors" },
