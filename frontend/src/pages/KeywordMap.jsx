@@ -33,6 +33,7 @@ export default function KeywordMap() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [drawerKw, setDrawerKw] = useState(null);
   const [showSparse, setShowSparse] = useState(false);
+  const [showRefined, setShowRefined] = useState(false);
   const [refineModalOpen, setRefineModalOpen] = useState(false);
   const [refinementState, setRefinementState] = useState(null);
   const [urlRefinements, setUrlRefinements] = useState({});
@@ -145,6 +146,17 @@ export default function KeywordMap() {
         </div>
         <div className="flex items-center gap-2">
           <Button
+            onClick={() => setShowRefined(!showRefined)}
+            variant="ghost"
+            className="text-violet-300 hover:bg-violet-400/10 hover:text-violet-200 rounded-sm"
+            data-testid="toggle-refined-panel"
+          >
+            <Sparkles size={13} className="mr-1.5" />
+            {Object.keys(urlRefinements).length > 0
+              ? `${Object.keys(urlRefinements).length} refined`
+              : "Refined URLs"}
+          </Button>
+          <Button
             onClick={() => setShowSparse(!showSparse)}
             variant="ghost"
             className="text-zinc-300 hover:bg-zinc-800 rounded-sm"
@@ -218,6 +230,10 @@ export default function KeywordMap() {
         )}
       </div>
 
+      {showRefined && (
+        <RefinedUrlsPanel refinements={urlRefinements} onClose={() => setShowRefined(false)} />
+      )}
+
       {showSparse && (
         <SparsePagesPanel clientId={clientId} onClose={() => setShowSparse(false)} onAnalyzed={load} />
       )}
@@ -252,7 +268,7 @@ export default function KeywordMap() {
       ) : !map?.keywords || Object.keys(map.keywords).length === 0 ? (
         <EmptyState onBuild={onBuild} building={building} />
       ) : (
-        <KeywordTable rows={keywords} onSelect={setDrawerKw} />
+        <KeywordTable rows={keywords} urlRefinements={urlRefinements} onSelect={setDrawerKw} />
       )}
 
       {drawerKw && (
@@ -425,6 +441,173 @@ function SourcePill({ active, label }) {
   );
 }
 
+function VerdictPill({ verdict }) {
+  const tone =
+    verdict === "matches" ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-300"
+    : verdict === "better_alternative" ? "border-amber-400/30 bg-amber-400/10 text-amber-300"
+    : verdict === "not_relevant" ? "border-rose-400/30 bg-rose-400/10 text-rose-300"
+    : "border-zinc-800 bg-zinc-900 text-zinc-400";
+  const label =
+    verdict === "matches" ? "AI ✓"
+    : verdict === "better_alternative" ? "AI: better alt exists"
+    : verdict === "not_relevant" ? "AI: not relevant"
+    : "AI";
+  return (
+    <span className={`inline-flex items-center px-1 py-0 rounded-sm border ${tone} font-mono text-[9px] uppercase`}>
+      {label}
+    </span>
+  );
+}
+
+function RefinedUrlsPanel({ refinements, onClose }) {
+  const [query, setQuery] = useState("");
+  const list = useMemo(() => {
+    const arr = Object.values(refinements || {});
+    arr.sort((a, b) => (b.confidence || 0) - (a.confidence || 0));
+    if (!query.trim()) return arr;
+    const q = query.toLowerCase().trim();
+    return arr.filter(
+      (r) =>
+        (r.url || "").toLowerCase().includes(q) ||
+        (r.recommended_primary || "").toLowerCase().includes(q) ||
+        (r.content_summary?.title || "").toLowerCase().includes(q),
+    );
+  }, [refinements, query]);
+
+  if (!list.length && !query) {
+    return (
+      <div className="rounded-sm border border-violet-400/20 bg-violet-400/[0.03] p-5 text-center text-xs text-zinc-400" data-testid="refined-panel-empty">
+        No URLs have been refined yet. Click <strong className="text-violet-300">Refine with AI</strong> above to start.
+      </div>
+    );
+  }
+
+  const verdictCounts = (r) => {
+    const v = r.relevance_per_mapped || {};
+    return {
+      m: Object.values(v).filter((x) => x === "matches").length,
+      b: Object.values(v).filter((x) => x === "better_alternative").length,
+      n: Object.values(v).filter((x) => x === "not_relevant").length,
+    };
+  };
+
+  return (
+    <div className="rounded-sm border border-violet-400/20 bg-violet-400/[0.03] p-4 space-y-3" data-testid="refined-panel">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="font-heading text-sm text-violet-300 flex items-center gap-1.5">
+            <Sparkles size={13} /> AI-refined URLs ({Object.keys(refinements).length})
+          </div>
+          <div className="text-[11px] text-zinc-400 mt-1 max-w-2xl">
+            Each URL was analyzed for content relevance. Recommended primary keyword + per-mapped-keyword verdicts.
+            Sorted by AI confidence.
+          </div>
+        </div>
+        <button onClick={onClose} className="text-zinc-500 hover:text-zinc-200 p-1" data-testid="refined-panel-close">
+          <X size={14} />
+        </button>
+      </div>
+
+      <div className="relative max-w-md">
+        <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-500" />
+        <Input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search URL, recommended keyword, or page title"
+          className="pl-8 bg-zinc-950 border-zinc-800 rounded-sm text-zinc-100 text-xs h-8"
+          data-testid="refined-search"
+        />
+      </div>
+
+      <div className="space-y-1.5 max-h-[600px] overflow-y-auto">
+        {list.map((r) => {
+          const c = verdictCounts(r);
+          return (
+            <RefinedRow key={r.url} r={r} counts={c} />
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function RefinedRow({ r, counts }) {
+  const [open, setOpen] = useState(false);
+  const conf = r.confidence != null ? Math.round(r.confidence * 100) : null;
+  return (
+    <div className="rounded-sm border border-zinc-800 bg-zinc-950" data-testid={`refined-row-${r.url}`}>
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="w-full text-left p-2.5 hover:bg-zinc-900/50 transition"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2 mb-0.5">
+              <span className="text-emerald-300 font-mono text-[11px] break-all">{r.url}</span>
+            </div>
+            <div className="text-[11px] text-zinc-300">
+              <span className="text-zinc-500">Recommended primary:</span>{" "}
+              <span className="text-violet-200 font-medium">{r.recommended_primary || "—"}</span>
+            </div>
+            {r.content_summary?.title && (
+              <div className="text-[10px] text-zinc-600 mt-0.5 font-mono truncate">
+                {r.content_summary.title}
+              </div>
+            )}
+          </div>
+          <div className="shrink-0 flex flex-col items-end gap-1">
+            {conf != null && (
+              <span className="text-[10px] font-mono text-zinc-500">conf {conf}%</span>
+            )}
+            <div className="flex items-center gap-0.5 text-[9px] font-mono">
+              {counts.m > 0 && <span className="px-1 rounded-sm bg-emerald-400/15 text-emerald-300">{counts.m}✓</span>}
+              {counts.b > 0 && <span className="px-1 rounded-sm bg-amber-400/15 text-amber-300">{counts.b} alt</span>}
+              {counts.n > 0 && <span className="px-1 rounded-sm bg-rose-400/15 text-rose-300">{counts.n}✗</span>}
+            </div>
+          </div>
+        </div>
+      </button>
+
+      {open && (
+        <div className="border-t border-zinc-800 p-3 space-y-2 text-[11px]">
+          {r.rationale && (
+            <div>
+              <div className="text-[9px] font-mono uppercase tracking-wider text-zinc-500 mb-0.5">Rationale</div>
+              <div className="text-zinc-300 leading-relaxed italic">{r.rationale}</div>
+            </div>
+          )}
+          {r.supporting_keywords?.length > 0 && (
+            <div>
+              <div className="text-[9px] font-mono uppercase tracking-wider text-zinc-500 mb-1">Supporting keywords</div>
+              <div className="flex flex-wrap gap-1">
+                {r.supporting_keywords.map((s, i) => (
+                  <span key={i} className="px-1.5 py-0.5 rounded-sm border border-zinc-800 bg-zinc-900 text-zinc-300 font-mono text-[10px]">
+                    {s}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+          {r.relevance_per_mapped && Object.keys(r.relevance_per_mapped).length > 0 && (
+            <div>
+              <div className="text-[9px] font-mono uppercase tracking-wider text-zinc-500 mb-1">Mapped keyword verdicts</div>
+              <div className="space-y-0.5">
+                {Object.entries(r.relevance_per_mapped).map(([kw, v]) => (
+                  <div key={kw} className="flex items-center justify-between gap-2">
+                    <span className="text-zinc-200 font-mono text-[10px] truncate">{kw}</span>
+                    <VerdictPill verdict={v} />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function EmptyState({ onBuild, building }) {
   return (
     <div className="rounded-sm border border-dashed border-zinc-800 bg-zinc-950 p-10 text-center">
@@ -446,7 +629,7 @@ function EmptyState({ onBuild, building }) {
   );
 }
 
-function KeywordTable({ rows, onSelect }) {
+function KeywordTable({ rows, urlRefinements, onSelect }) {
   return (
     <div className="rounded-sm border border-zinc-800 overflow-hidden">
       <div className="overflow-x-auto">
@@ -464,7 +647,7 @@ function KeywordTable({ rows, onSelect }) {
           </thead>
           <tbody>
             {rows.slice(0, 500).map((k) => (
-              <KeywordRow key={k.keyword} k={k} onSelect={onSelect} />
+              <KeywordRow key={k.keyword} k={k} urlRefinements={urlRefinements} onSelect={onSelect} />
             ))}
           </tbody>
         </table>
@@ -486,9 +669,11 @@ function Th({ children, className = "" }) {
   );
 }
 
-function KeywordRow({ k, onSelect }) {
+function KeywordRow({ k, urlRefinements, onSelect }) {
   const def = STATUS_TONE[k.status] || STATUS_TONE.unknown;
   const Icon = def.icon;
+  const refinement = k.current_url && urlRefinements?.[normalizeUrl(k.current_url)];
+  const verdict = refinement?.relevance_per_mapped?.[k.keyword.toLowerCase()];
   return (
     <tr
       onClick={() => onSelect(k.keyword)}
@@ -500,9 +685,12 @@ function KeywordRow({ k, onSelect }) {
           {k.priority && <Star size={10} className="text-amber-400 shrink-0 fill-amber-400" />}
           <span className="text-zinc-100 break-words">{k.keyword}</span>
         </div>
-        {k.intent && (
-          <div className="text-[10px] text-zinc-600 font-mono uppercase tracking-wider mt-0.5">{k.intent}</div>
-        )}
+        <div className="flex items-center gap-2 mt-0.5">
+          {k.intent && (
+            <span className="text-[10px] text-zinc-600 font-mono uppercase tracking-wider">{k.intent}</span>
+          )}
+          {verdict && <VerdictPill verdict={verdict} />}
+        </div>
       </td>
       <td className="px-3 py-2 align-top">
         <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm border ${def.cls} font-mono text-[10px] uppercase`}>
@@ -517,15 +705,22 @@ function KeywordRow({ k, onSelect }) {
       </td>
       <td className="px-3 py-2 align-top max-w-xs">
         {k.current_url ? (
-          <a
-            href={k.current_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={(e) => e.stopPropagation()}
-            className="text-emerald-300 hover:text-emerald-200 font-mono text-[11px] break-all inline-flex items-center gap-1"
-          >
-            {truncatePath(k.current_url)} <ExternalLink size={9} className="shrink-0" />
-          </a>
+          <div className="flex items-center gap-1.5">
+            <a
+              href={k.current_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              className="text-emerald-300 hover:text-emerald-200 font-mono text-[11px] break-all inline-flex items-center gap-1"
+            >
+              {truncatePath(k.current_url)} <ExternalLink size={9} className="shrink-0" />
+            </a>
+            {refinement && (
+              <span title={`AI refined · recommends "${refinement.recommended_primary}"`} className="shrink-0 text-violet-400">
+                <Sparkles size={10} />
+              </span>
+            )}
+          </div>
         ) : (
           <span className="text-zinc-600 italic">none</span>
         )}
