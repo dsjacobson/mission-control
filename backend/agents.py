@@ -335,10 +335,12 @@ Return strict JSON:
 
 # ---------- On-Page Optimizer ----------
 
-async def optimize_pages(run_id: str, client: Dict[str, Any], pages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+async def optimize_pages(run_id: str, client: Dict[str, Any], pages: List[Dict[str, Any]], issue_context: Optional[str] = None) -> List[Dict[str, Any]]:
     """For each page produce concrete, ready-to-paste title, meta, H1.
 
     pages: list of {url, current_title?, current_meta?, current_h1?, gsc_queries: [str], clicks?, impressions?}
+    issue_context: optional description of the specific technical issue this run should focus on
+                   (e.g. "Pages missing H1 tag — generate compelling H1s for the listed URLs").
     Returns enriched list with proposed_title, proposed_meta, proposed_h1, target_keyword,
     title_char_count, meta_char_count, schema_notes.
     """
@@ -360,9 +362,13 @@ async def optimize_pages(run_id: str, client: Dict[str, Any], pages: List[Dict[s
         )
     body = "\n\n".join(page_blocks)
 
+    focus_block = ""
+    if issue_context:
+        focus_block = f"\n\nSpecific issue to address for these pages:\n{issue_context}\n"
+
     prompt = f"""Client: {client.get('name')} · {client.get('domain')}
 Industry: {client.get('industry') or 'unspecified'}
-Goals: {client.get('goals') or 'general SEO growth'}
+Goals: {client.get('goals') or 'general SEO growth'}{focus_block}
 
 Optimize the following pages. For each, write a ready-to-paste:
 - proposed_title (≤60 chars, include primary target keyword, distinct from competitors, click-worthy)

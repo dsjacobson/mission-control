@@ -2,12 +2,14 @@ import React, { useEffect, useState, useCallback } from "react";
 import { useParams, Link } from "react-router-dom";
 import {
   ListTodo, Share2, Copy, RotateCcw, Filter, Pencil, Wrench, FileText, Telescope, Lightbulb,
-  Circle, PlayCircle, CheckCircle2, Archive,
+  Circle, PlayCircle, CheckCircle2, Archive, Sparkles, Loader2, AlertCircle, Save, X,
 } from "lucide-react";
 import api from "../lib/api";
 import { useClients } from "../lib/ClientContext";
 import { PageHeader, Section, StatTile, EmptyState, formatRelative } from "../components/Bits";
 import { Button } from "../components/ui/button";
+import { Input } from "../components/ui/input";
+import { Textarea } from "../components/ui/textarea";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/tabs";
 import { toast } from "sonner";
 import PageOptimizationCard from "../components/PageOptimizationCard";
@@ -62,10 +64,26 @@ export default function Tasks() {
     setBusyId(id);
     try {
       await api.updateProgress(id, progress);
-      toast.success(`Moved to ${PROGRESS[progress].label.toLowerCase()}`);
+      const msg = progress === "in_progress"
+        ? "Moved to In progress · agent running"
+        : `Moved to ${PROGRESS[progress].label.toLowerCase()}`;
+      toast.success(msg);
       load();
     } catch {
       toast.error("Failed to update");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const runAgent = async (id) => {
+    setBusyId(id);
+    try {
+      await api.executeTask(id);
+      toast.success("Agent running… result will appear shortly");
+      load();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed to start agent");
     } finally {
       setBusyId(null);
     }
@@ -200,7 +218,7 @@ export default function Tasks() {
         ) : (
           <div className="space-y-2">
             {tasks.map((t) => (
-              <TaskRow key={t.id} task={t} busy={busyId === t.id} onProgress={updateProgress} />
+              <TaskRow key={t.id} task={t} busy={busyId === t.id} onProgress={updateProgress} onRun={runAgent} onRefresh={load} />
             ))}
           </div>
         )}
@@ -209,12 +227,16 @@ export default function Tasks() {
   );
 }
 
-function TaskRow({ task, busy, onProgress }) {
+const EXECUTABLE_KINDS = new Set(["technical_action", "page_optimization", "content_brief", "strategy_doc"]);
+
+function TaskRow({ task, busy, onProgress, onRun, onRefresh }) {
   const progress = task.progress || "open";
   const KindIcon = KIND_ICON[task.kind] || ListTodo;
   const p = PROGRESS[progress] || PROGRESS.open;
   const PIcon = p.icon;
   const done = progress === "done";
+  const artifactStatus = task.artifact_status || "none";
+  const executable = EXECUTABLE_KINDS.has(task.kind);
 
   const toggleDone = () => onProgress(task.id, done ? "open" : "done");
 
@@ -248,15 +270,16 @@ function TaskRow({ task, busy, onProgress }) {
           {task.summary && (
             <div className="text-xs text-zinc-500 mt-1">{task.summary}</div>
           )}
-          {/* type-specific previews */}
-          {task.kind === "page_optimization" && (
+
+          {/* Type-specific brief context */}
+          {task.kind === "page_optimization" && !task.artifact && (
             <div className="mt-3">
               <PageOptimizationCard content={task.content} testIdPrefix={`task-po-${task.id}`} />
             </div>
           )}
           {task.kind === "technical_action" && task.content?.recommended_fix && (
-            <div className="mt-2 text-xs text-emerald-400 leading-relaxed">
-              <span className="font-mono uppercase tracking-wider text-[10px] text-emerald-500/80">Fix · </span>
+            <div className="mt-2 text-xs text-zinc-400 leading-relaxed">
+              <span className="font-mono uppercase tracking-wider text-[10px] text-zinc-500">Diagnosis · </span>
               {task.content.recommended_fix}
             </div>
           )}
@@ -266,8 +289,13 @@ function TaskRow({ task, busy, onProgress }) {
             </div>
           )}
 
+          {/* AGENT ARTIFACT — the actual work */}
+          {executable && (
+            <ArtifactBlock task={task} status={artifactStatus} onRun={onRun} onRefresh={onRefresh} busy={busy} />
+          )}
+
           {/* progress controls */}
-          <div className="mt-3 flex items-center gap-1 text-[11px]">
+          <div className="mt-3 flex items-center gap-1 text-[11px] flex-wrap">
             <span className="text-zinc-500 font-mono uppercase tracking-wider mr-1">Move to:</span>
             {["open", "in_progress", "done", "archived"].map((state) => (
               <button
@@ -289,5 +317,188 @@ function TaskRow({ task, busy, onProgress }) {
         </div>
       </div>
     </div>
+  );
+}
+
+function ArtifactBlock({ task, status, onRun, onRefresh, busy }) {
+  const [editing, setEditing] = React.useState(false);
+  const [draft, setDraft] = React.useState("");
+  const [saving, setSaving] = React.useState(false);
+
+  // Poll while generating
+  React.useEffect(() => {
+    if (status !== "generating") return;
+    const id = setInterval(() => onRefresh && onRefresh(), 3000);
+    return () => clearInterval(id);
+  }, [status, onRefresh]);
+
+  const startEdit = () => {
+    setDraft(JSON.stringify(task.artifact || {}, null, 2));
+    setEditing(true);
+  };
+
+  const saveEdit = async () => {
+    setSaving(true);
+    try {
+      const parsed = JSON.parse(draft);
+      await api.editArtifact(task.id, parsed);
+      toast.success("Artifact updated");
+      setEditing(false);
+      onRefresh && onRefresh();
+    } catch (e) {
+      toast.error(e?.message?.includes("JSON") ? "Invalid JSON" : "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (status === "generating") {
+    return (
+      <div className="mt-3 rounded-sm border border-amber-400/20 bg-amber-400/5 p-3 flex items-center gap-2" data-testid={`artifact-generating-${task.id}`}>
+        <Loader2 size={14} className="text-amber-400 animate-spin" />
+        <span className="text-xs text-amber-300/90 font-mono">Agent is working… this usually takes 20-40s.</span>
+      </div>
+    );
+  }
+
+  if (status === "error") {
+    return (
+      <div className="mt-3 rounded-sm border border-rose-400/20 bg-rose-400/5 p-3" data-testid={`artifact-error-${task.id}`}>
+        <div className="flex items-center gap-2 mb-1.5">
+          <AlertCircle size={13} className="text-rose-400" />
+          <span className="text-xs text-rose-400 font-mono">Agent failed</span>
+        </div>
+        <div className="text-xs text-zinc-400">{task.artifact_error || "Unknown error"}</div>
+        <Button
+          size="sm"
+          onClick={() => onRun(task.id)}
+          disabled={busy}
+          data-testid={`retry-agent-${task.id}`}
+          className="mt-2 bg-zinc-50 text-zinc-950 hover:bg-zinc-200 rounded-sm h-7 px-2.5 text-xs"
+        >
+          <Sparkles size={11} className="mr-1" /> Try again
+        </Button>
+      </div>
+    );
+  }
+
+  if (status === "ready" && task.artifact) {
+    return (
+      <div className="mt-3 rounded-sm border border-emerald-400/20 bg-emerald-400/[0.03] p-3" data-testid={`artifact-ready-${task.id}`}>
+        <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+          <div className="flex items-center gap-2">
+            <Sparkles size={12} className="text-emerald-400" />
+            <span className="text-[10px] font-mono uppercase tracking-wider text-emerald-400">Agent output</span>
+            <span className="text-[10px] font-mono text-zinc-500">{formatRelative(task.artifact_generated_at)}</span>
+          </div>
+          <div className="flex items-center gap-1">
+            {!editing && (
+              <>
+                <Button size="sm" variant="ghost" onClick={startEdit} className="text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded-sm h-7 px-2 text-xs" data-testid={`edit-artifact-${task.id}`}>
+                  <Pencil size={11} className="mr-1" /> Edit
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => onRun(task.id)} disabled={busy} className="text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded-sm h-7 px-2 text-xs" data-testid={`rerun-agent-${task.id}`}>
+                  <Sparkles size={11} className="mr-1" /> Re-run
+                </Button>
+              </>
+            )}
+          </div>
+        </div>
+
+        {editing ? (
+          <div className="space-y-2">
+            <Textarea
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              data-testid={`artifact-edit-textarea-${task.id}`}
+              className="bg-zinc-950 border-zinc-800 rounded-sm text-zinc-100 font-mono text-xs min-h-[280px]"
+            />
+            <div className="flex items-center gap-2">
+              <Button size="sm" onClick={saveEdit} disabled={saving} data-testid={`save-artifact-${task.id}`} className="bg-emerald-500/90 hover:bg-emerald-500 text-zinc-950 rounded-sm h-7 px-2.5 text-xs">
+                <Save size={11} className="mr-1" /> {saving ? "Saving…" : "Save"}
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setEditing(false)} className="text-zinc-400 hover:text-zinc-100 rounded-sm h-7 px-2.5 text-xs">
+                <X size={11} className="mr-1" /> Cancel
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <ArtifactRender artifact={task.artifact} task={task} />
+        )}
+      </div>
+    );
+  }
+
+  // status === "none" — show Run agent button
+  return (
+    <div className="mt-3">
+      <Button
+        size="sm"
+        onClick={() => onRun(task.id)}
+        disabled={busy}
+        data-testid={`run-agent-${task.id}`}
+        className="bg-zinc-50 text-zinc-950 hover:bg-zinc-200 rounded-sm h-8 px-3 text-xs font-medium"
+      >
+        <Sparkles size={12} className="mr-1.5" /> Run agent to produce the fix
+      </Button>
+    </div>
+  );
+}
+
+function ArtifactRender({ artifact, task }) {
+  if (!artifact) return null;
+  // Page-level fixes (most common artifact shape)
+  if (artifact.kind === "page_fixes" && Array.isArray(artifact.pages)) {
+    return (
+      <div className="space-y-3">
+        {artifact.pages.map((p, i) => (
+          <PageOptimizationCard key={i} content={p} testIdPrefix={`artifact-${task.id}-p${i}`} />
+        ))}
+      </div>
+    );
+  }
+  if (artifact.kind === "no_pages") {
+    return (
+      <div className="text-xs text-amber-400 leading-relaxed">
+        <AlertCircle size={11} className="inline mr-1 -mt-0.5" />
+        {artifact.message}
+      </div>
+    );
+  }
+  // Publisher draft
+  if (artifact.kind === "publisher_draft" && artifact.draft) {
+    const d = artifact.draft;
+    return (
+      <div className="space-y-2 text-xs">
+        {d.title && <div><span className="text-zinc-500 font-mono uppercase tracking-wider text-[10px]">Title</span> · <span className="text-zinc-100">{d.title}</span></div>}
+        {d.meta_description && <div><span className="text-zinc-500 font-mono uppercase tracking-wider text-[10px]">Meta</span> · <span className="text-zinc-200">{d.meta_description}</span></div>}
+        {Array.isArray(d.outline) && (
+          <div>
+            <div className="text-zinc-500 font-mono uppercase tracking-wider text-[10px] mb-1">Outline</div>
+            <ul className="space-y-0.5">
+              {d.outline.map((h, i) => (
+                <li key={i} className="text-zinc-300">— {h.heading || h}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+    );
+  }
+  // Strategy refresh
+  if (artifact.kind === "strategy_refresh" && artifact.strategy) {
+    return (
+      <div className="text-xs space-y-2">
+        {artifact.strategy.executive_summary && (
+          <div className="text-zinc-300 leading-relaxed">{artifact.strategy.executive_summary}</div>
+        )}
+      </div>
+    );
+  }
+  // Fallback: pretty JSON
+  return (
+    <pre className="text-xs font-mono text-zinc-300 bg-zinc-950 border border-zinc-800 rounded-sm p-3 whitespace-pre-wrap break-words max-h-64 overflow-y-auto">
+      {JSON.stringify(artifact, null, 2)}
+    </pre>
   );
 }

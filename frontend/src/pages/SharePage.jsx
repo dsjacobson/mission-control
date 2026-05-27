@@ -173,11 +173,19 @@ function ShareTask({ task }) {
             {task.title}
           </div>
           {task.summary && <div className="text-xs text-zinc-500 mt-1">{task.summary}</div>}
-          {task.kind === "page_optimization" && (
-            <div className="mt-3">
-              <PageOptimizationCard content={task.content} />
-            </div>
-          )}
+      {/* Agent artifact (the actual work product) takes priority when present */}
+      {task.artifact?.kind === "page_fixes" && Array.isArray(task.artifact.pages) && (
+        <div className="mt-3 space-y-3">
+          {task.artifact.pages.map((p, i) => (
+            <PageOptimizationCard key={i} content={p} />
+          ))}
+        </div>
+      )}
+      {!task.artifact && task.kind === "page_optimization" && (
+        <div className="mt-3">
+          <PageOptimizationCard content={task.content} />
+        </div>
+      )}
           {task.kind === "technical_action" && task.content?.recommended_fix && (
             <div className="mt-2 text-xs text-emerald-400 leading-relaxed">
               <span className="font-mono uppercase tracking-wider text-[10px] text-emerald-500/80">Fix · </span>

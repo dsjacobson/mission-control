@@ -32,6 +32,7 @@ from workflow import launch_workflow_task
 import gsc
 import ga
 import screamingfrog
+import executor
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -226,7 +227,9 @@ async def decide_approval(approval_id: str, decision: ApprovalDecision):
 
 @api.post("/approvals/{approval_id}/progress", response_model=Approval)
 async def update_progress(approval_id: str, payload: ProgressUpdate):
-    """Move an approved item along its lifecycle: open → in_progress → done → archived."""
+    """Move an approved item along its lifecycle: open → in_progress → done → archived.
+    
+    Auto-triggers agent execution when moving to in_progress if no artifact exists yet."""
     if payload.progress not in ("open", "in_progress", "done", "archived"):
         raise HTTPException(400, "Invalid progress value")
     update = {
@@ -241,6 +244,57 @@ async def update_progress(approval_id: str, payload: ProgressUpdate):
     )
     if result.matched_count == 0:
         raise HTTPException(404, "Approved approval not found")
+
+    # Auto-execute when moving to in_progress without an existing artifact
+    doc = await db.approvals.find_one({"id": approval_id}, {"_id": 0})
+    if (
+        payload.progress == "in_progress"
+        and executor.is_executable(doc.get("kind", ""))
+        and (doc.get("artifact_status") or "none") in ("none", "error")
+    ):
+        await db.approvals.update_one(
+            {"id": approval_id},
+            {"$set": {"artifact_status": "generating", "artifact_error": None}},
+        )
+        executor.launch_execute(db, approval_id)
+        doc["artifact_status"] = "generating"
+    return doc
+
+
+@api.post("/approvals/{approval_id}/execute", response_model=Approval)
+async def execute_approval(approval_id: str):
+    """Explicitly trigger agent execution for an approved task."""
+    doc = await db.approvals.find_one({"id": approval_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Approval not found")
+    if doc.get("status") != "approved":
+        raise HTTPException(400, "Task must be approved first")
+    if not executor.is_executable(doc.get("kind", "")):
+        raise HTTPException(400, f"No executor available for kind '{doc.get('kind')}'")
+    if doc.get("artifact_status") == "generating":
+        return doc
+    await db.approvals.update_one(
+        {"id": approval_id},
+        {"$set": {"artifact_status": "generating", "artifact_error": None}},
+    )
+    executor.launch_execute(db, approval_id)
+    doc["artifact_status"] = "generating"
+    return doc
+
+
+class ArtifactEdit(BaseModel):
+    artifact: Dict[str, Any]
+
+
+@api.put("/approvals/{approval_id}/artifact", response_model=Approval)
+async def edit_artifact(approval_id: str, payload: ArtifactEdit):
+    """Inline edit the agent-generated artifact."""
+    result = await db.approvals.update_one(
+        {"id": approval_id},
+        {"$set": {"artifact": payload.artifact, "artifact_status": "ready"}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(404, "Approval not found")
     return await db.approvals.find_one({"id": approval_id}, {"_id": 0})
 
 
@@ -305,7 +359,9 @@ async def share_tasks(token: str):
         raise HTTPException(404, "Share link invalid or expired")
     items = await db.approvals.find(
         {"client_id": client["id"], "status": "approved", "progress": {"$ne": "archived"}},
-        {"_id": 0, "id": 1, "kind": 1, "title": 1, "summary": 1, "content": 1, "progress": 1, "decided_at": 1, "progress_updated_at": 1},
+        {"_id": 0, "id": 1, "kind": 1, "title": 1, "summary": 1, "content": 1, "progress": 1,
+         "decided_at": 1, "progress_updated_at": 1,
+         "artifact": 1, "artifact_status": 1, "artifact_generated_at": 1},
     ).sort("decided_at", -1).to_list(500)
     counters = {"total": len(items), "open": 0, "in_progress": 0, "done": 0}
     for it in items:

@@ -151,6 +151,11 @@ class Approval(BaseModel):
     status: ApprovalStatus = "pending"
     progress: ApprovalProgress = "open"
     progress_note: Optional[str] = ""
+    # Agent-generated artifact (the actual work product when "Run agent" is clicked)
+    artifact: Optional[Dict[str, Any]] = None
+    artifact_status: Literal["none", "generating", "ready", "error"] = "none"
+    artifact_generated_at: Optional[str] = None
+    artifact_error: Optional[str] = None
     created_at: str = Field(default_factory=now_iso)
     decided_at: Optional[str] = None
     decision_note: Optional[str] = None
