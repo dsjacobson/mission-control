@@ -11,16 +11,24 @@ Computes per-keyword:
   - search_volume      : best volume estimate
   - traffic            : monthly clicks where known (GSC + Semrush)
   - intent             : informational | commercial | transactional | navigational (Semrush)
-  - status             : aligned | cannibalized | wrong_page | missing_page | under_optimized
+  - status             : aligned | cannibalized | wrong_page | missing_page | under_optimized | low_position
   - target_url         : human-approved URL (initially = current_url unless overridden)
   - sources            : which signals contributed
+
+URL refinement (relevance-first):
+  Per-URL AI pass that picks the most relevant primary keyword based on actual
+  page content. Stored under `keyword_map.url_refinement.{normalized_url}`.
 """
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+import agents
+import dataforseo
 import gsc
+import page_analyzer
 import semrush_csv
 import screamingfrog
 
@@ -352,3 +360,209 @@ async def sparse_urls(db, client_id: str, *, min_keywords: int = 3, min_impressi
             })
     sparse.sort(key=lambda x: x.get("inlinks") or 0, reverse=True)
     return sparse[:limit]
+
+
+# ---------- URL Refinement (relevance-first) ----------
+
+REFINE_BATCH_SIZE = 5   # AI calls in parallel per batch
+REFINE_RATE_DELAY = 1.0 # Seconds between batches (rate limit safety)
+
+
+async def _gather_mapped_keywords_per_url(db, client_id: str) -> Dict[str, List[Dict[str, Any]]]:
+    """For each URL in the page index, gather keywords currently mapped to it."""
+    map_doc = await get_keyword_map(db, client_id)
+    keywords = (map_doc.get("keywords") or {})
+    by_url: Dict[str, List[Dict[str, Any]]] = {}
+    for kw, slot in keywords.items():
+        url = slot.get("current_url")
+        if not url:
+            continue
+        norm = _normalize_url(url)
+        by_url.setdefault(norm, []).append({
+            "keyword": kw,
+            "position": slot.get("current_position"),
+            "search_volume": slot.get("search_volume"),
+            "source": ",".join(k for k, v in (slot.get("sources") or {}).items() if v),
+        })
+    return by_url
+
+
+async def _refine_single_url(
+    db,
+    client: Dict[str, Any],
+    sf_page: Dict[str, Any],
+    mapped_keywords: List[Dict[str, Any]],
+    run_id: str,
+) -> Dict[str, Any]:
+    """Refine one URL: fetch content, get DFS related, run AI, save result."""
+    url = sf_page.get("url")
+    # 1. Fetch fresh page content (SF page index only has title/H1, not body)
+    fetched = await page_analyzer.fetch_page(url)
+    if not fetched.get("ok"):
+        return {"url": url, "ok": False, "error": fetched.get("error", "fetch failed")}
+    content = fetched["content"]
+
+    # 2. Pull DataForSEO related variants for the strongest mapped keyword (or page title)
+    seed = mapped_keywords[0]["keyword"] if mapped_keywords else (sf_page.get("title") or "")[:60]
+    related: List[Dict[str, Any]] = []
+    if dataforseo.is_configured() and seed:
+        try:
+            related = await dataforseo.keyword_suggestions(seed, limit=20)
+        except Exception:
+            related = []
+
+    # 3. AI relevance pass
+    page_dict = {
+        "url": url,
+        "title": content.get("title") or sf_page.get("title"),
+        "h1": content.get("h1") or [sf_page.get("h1")] if sf_page.get("h1") else content.get("h1"),
+        "h2": content.get("h2"),
+        "body_sample": content.get("body_sample"),
+    }
+    refined = await agents.refine_url_keywords(
+        run_id=run_id, client=client, page=page_dict,
+        mapped_keywords=mapped_keywords, related_candidates=related,
+    )
+    if not refined.get("recommended_primary"):
+        return {"url": url, "ok": False, "error": "AI returned no primary recommendation"}
+
+    out = {
+        "url": url,
+        "recommended_primary": refined.get("recommended_primary"),
+        "supporting_keywords": refined.get("supporting_keywords", [])[:8],
+        "relevance_per_mapped": refined.get("relevance_per_mapped", {}),
+        "rationale": refined.get("rationale", ""),
+        "confidence": refined.get("confidence"),
+        "mapped_count": len(mapped_keywords),
+        "content_summary": {
+            "title": content.get("title"),
+            "word_count_estimate": content.get("word_count_estimate"),
+        },
+        "refined_at": datetime.now(timezone.utc).isoformat(),
+    }
+    # Persist
+    await db.clients.update_one(
+        {"id": client["id"]},
+        {"$set": {f"keyword_map.url_refinement.{_normalize_url(url)}": out}},
+    )
+    return {"url": url, "ok": True, **out}
+
+
+async def _run_refinement_job(db, client_id: str, urls: List[Dict[str, Any]], job_id: str) -> None:
+    """Background task: refine N URLs in parallel batches. Updates progress on
+    `keyword_map.refinement` so the UI can poll."""
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0})
+    if not client:
+        return
+    mapped_by_url = await _gather_mapped_keywords_per_url(db, client_id)
+    total = len(urls)
+    completed = 0
+    errors = 0
+
+    async def _set_progress(extra=None):
+        update = {
+            "keyword_map.refinement.completed": completed,
+            "keyword_map.refinement.errors": errors,
+            "keyword_map.refinement.updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        if extra:
+            update.update(extra)
+        await db.clients.update_one({"id": client_id}, {"$set": update})
+
+    try:
+        for i in range(0, total, REFINE_BATCH_SIZE):
+            batch = urls[i:i + REFINE_BATCH_SIZE]
+            tasks = []
+            for sf_page in batch:
+                norm = _normalize_url(sf_page.get("url"))
+                mapped = mapped_by_url.get(norm, [])
+                tasks.append(_refine_single_url(db, client, sf_page, mapped, run_id=job_id))
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for r in results:
+                if isinstance(r, Exception) or not (isinstance(r, dict) and r.get("ok")):
+                    errors += 1
+                completed += 1
+            await _set_progress()
+            if i + REFINE_BATCH_SIZE < total:
+                await asyncio.sleep(REFINE_RATE_DELAY)
+        await _set_progress({
+            "keyword_map.refinement.status": "done",
+            "keyword_map.refinement.finished_at": datetime.now(timezone.utc).isoformat(),
+        })
+    except Exception as e:
+        await db.clients.update_one(
+            {"id": client_id},
+            {"$set": {
+                "keyword_map.refinement.status": "failed",
+                "keyword_map.refinement.error": str(e)[:200],
+                "keyword_map.refinement.completed": completed,
+                "keyword_map.refinement.errors": errors,
+            }},
+        )
+
+
+async def start_refinement(db, client_id: str, limit: int = 100) -> Dict[str, Any]:
+    """Pick the top N URLs by inlinks, kick off the background refinement job."""
+    import uuid
+    doc = await db.clients.find_one(
+        {"id": client_id},
+        {"_id": 0, "screaming_frog.page_index": 1},
+    )
+    pages = ((doc or {}).get("screaming_frog") or {}).get("page_index") or []
+    if not pages:
+        raise RuntimeError("No Screaming Frog page index — run a crawl first")
+
+    # Sort by inlinks desc (most important pages first) and take limit
+    pages = sorted(pages, key=lambda p: p.get("inlinks") or 0, reverse=True)[:max(1, limit)]
+
+    job_id = uuid.uuid4().hex[:12]
+    state = {
+        "job_id": job_id,
+        "status": "running",
+        "total": len(pages),
+        "completed": 0,
+        "errors": 0,
+        "limit": limit,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.clients.update_one(
+        {"id": client_id},
+        {"$set": {"keyword_map.refinement": state}},
+    )
+    asyncio.create_task(_run_refinement_job(db, client_id, pages, job_id))
+    return state
+
+
+async def get_refinement_status(db, client_id: str) -> Dict[str, Any]:
+    doc = await db.clients.find_one(
+        {"id": client_id},
+        {"_id": 0, "keyword_map.refinement": 1},
+    )
+    return ((doc or {}).get("keyword_map") or {}).get("refinement") or {}
+
+
+async def get_url_refinement(db, client_id: str, url: str) -> Optional[Dict[str, Any]]:
+    doc = await db.clients.find_one(
+        {"id": client_id},
+        {"_id": 0, "keyword_map.url_refinement": 1},
+    )
+    refinements = ((doc or {}).get("keyword_map") or {}).get("url_refinement") or {}
+    return refinements.get(_normalize_url(url))
+
+
+async def list_url_refinements(db, client_id: str) -> Dict[str, Any]:
+    doc = await db.clients.find_one(
+        {"id": client_id},
+        {"_id": 0, "keyword_map.url_refinement": 1},
+    )
+    return ((doc or {}).get("keyword_map") or {}).get("url_refinement") or {}
+
+
+async def page_index_total(db, client_id: str) -> int:
+    doc = await db.clients.find_one(
+        {"id": client_id},
+        {"_id": 0, "screaming_frog.page_index": 1},
+    )
+    return len(((doc or {}).get("screaming_frog") or {}).get("page_index") or [])
+

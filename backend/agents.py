@@ -681,3 +681,81 @@ Return strict JSON:
     data = _safe_parse_json(raw, fallback={"primary_keyword": ""})
     return (data.get("primary_keyword") or "").strip().lower() if isinstance(data, dict) else ""
 
+
+async def refine_url_keywords(
+    run_id: str,
+    client: Dict[str, Any],
+    page: Dict[str, Any],
+    mapped_keywords: List[Dict[str, Any]],
+    related_candidates: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Relevance-first keyword selection for a single URL.
+
+    Inputs:
+      page: {url, title, h1, h2, body_sample}
+      mapped_keywords: [{keyword, position, search_volume, source}, ...]
+      related_candidates: [{keyword, search_volume, intent}, ...] from DataForSEO
+
+    Output:
+      recommended_primary, supporting_keywords, relevance_per_mapped, rationale
+    """
+    body = (page.get("body_sample") or "")[:3500]
+    mapped_block = "\n".join(
+        f"  - {k.get('keyword')} (pos {k.get('position')}, vol {k.get('search_volume') or '?'}, src {k.get('source')})"
+        for k in (mapped_keywords or [])[:25]
+    ) or "  (none)"
+    related_block = "\n".join(
+        f"  - {k.get('keyword')} (vol {k.get('search_volume') or '?'}, intent {k.get('intent') or '?'})"
+        for k in (related_candidates or [])[:30]
+    ) or "  (none)"
+
+    prompt = f"""Client: {client.get('name')} · {client.get('domain')}
+Industry: {client.get('industry') or 'unspecified'}
+
+Page URL: {page.get('url')}
+Title: {page.get('title') or '(missing)'}
+H1: {", ".join(page.get('h1') or []) or '(missing)'}
+H2: {", ".join(page.get('h2') or [])[:400]}
+Body sample:
+{body}
+
+Currently mapped keywords (from GSC / Semrush rankings):
+{mapped_block}
+
+Related keyword candidates (from DataForSEO):
+{related_block}
+
+Your job: pick the SINGLE MOST RELEVANT primary keyword this page should target.
+RELEVANCE comes first — does the keyword actually describe what this page is
+about? Volume and current ranking are tiebreakers, not the primary signal.
+
+Rules:
+1. The recommended keyword can come from the mapped list, the related list,
+   OR be a more specific phrase you compose (it must clearly match the page content).
+2. Prefer specificity. "cassata" is too broad if the page is about a recipe.
+   Prefer "sicilian cassata recipe" or "baked cassata recipe".
+3. For each currently-mapped keyword, classify as one of:
+   - "matches"            (genuinely relevant to the page)
+   - "better_alternative" (relevant but a more specific phrase exists)
+   - "not_relevant"       (this page shouldn't be targeting this keyword)
+4. Supporting keywords: 3-5 related phrases (long-tail, semantic siblings) that
+   genuinely match the content. These are "also targets," not the primary.
+
+Return strict JSON:
+{{
+  "recommended_primary": "string (lowercase, 1-7 words)",
+  "supporting_keywords": ["string", "string", "..."],
+  "relevance_per_mapped": {{"<keyword>": "matches|better_alternative|not_relevant"}},
+  "rationale": "string (1-2 sentences, why this primary)",
+  "confidence": 0.0
+}}"""
+    raw = await _run_agent("page_keyword", run_id, prompt)
+    data = _safe_parse_json(raw, fallback={})
+    if not isinstance(data, dict):
+        return {}
+    data["recommended_primary"] = (data.get("recommended_primary") or "").strip().lower()
+    data["supporting_keywords"] = [s.strip().lower() for s in (data.get("supporting_keywords") or []) if s]
+    rel = data.get("relevance_per_mapped") or {}
+    data["relevance_per_mapped"] = {k.lower(): v for k, v in rel.items() if isinstance(v, str)}
+    return data
+

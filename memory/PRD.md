@@ -94,17 +94,31 @@ only), Screaming Frog MCP.
   `backend/keyword_map.py`). Aggregates target keywords from 3 sources:
   GSC by_query_page (new joint dimension pull), Semrush organic positions
   CSV, Semrush keyword gap CSV. Classifies each keyword as aligned /
-  cannibalized / wrong_page / missing_page / under_optimized. Per-keyword
-  drawer shows position, volume, cannibal URLs, competitor URLs, and live
-  SERP top-10 (DataForSEO Google Organic Live Regular) with backlink
-  metrics for each ranked URL (DR, PR, total backlinks, referring domains,
-  derived dofollow domains via bulk endpoints — ~$0.003 per fetch).
+  cannibalized / wrong_page / missing_page / under_optimized / low_position.
+  Per-keyword drawer shows position, volume, cannibal URLs, competitor URLs,
+  and live SERP top-10 (DataForSEO Google Organic Live Regular) with
+  backlink metrics for each ranked URL (DR, PR, total backlinks, referring
+  domains, derived dofollow domains, spam score via bulk endpoints —
+  ~$0.003 per fetch).
+- **Status classifier fixes** — `aligned` now requires pos ≤ 5 (not just
+  any current_url). pos 6-20 → `under_optimized`, pos > 20 → `low_position`
+  (new). Cannibalization now detected from Semrush positions too (multiple
+  client URLs ranking for same keyword), not GSC-only. Major bug fix where
+  every keyword previously fell through to "aligned".
+- **AI refinement (relevance-first)** — `agents.refine_url_keywords` +
+  `keyword_map.start_refinement`. For each URL (top N by inlinks), fetches
+  the page, gathers currently-mapped keywords, pulls DataForSEO related
+  variants, and asks the AI to pick the most CONTENT-RELEVANT primary
+  keyword (specificity > volume). Outputs supporting keywords + per-mapped
+  keyword verdicts (matches / better_alternative / not_relevant) + rationale.
+  Background job with progress polling; modal lets user pick N (presets
+  25/100/250/500/all) with live cost/time estimates.
 - **Page-first sparse analyzer** — `backend/page_analyzer.py` fetches a
   URL, strips HTML to title/headings/body, AI agent identifies primary
   keyword, DataForSEO returns related variants with volume/intent,
   recommends optimal mapped keyword. Surfaced via "Sparse pages" panel
   for URLs with weak keyword signal.
-- Tests: 27 unit tests across CSV parsing, issue routing, URL normalization,
+- Tests: 31 unit tests across CSV parsing, issue routing, URL normalization,
   keyword map aggregation, status classification.
 
 ### 2026-02-XX — Phase 3 complete: GA OAuth + Screaming Frog + Strategy grounded

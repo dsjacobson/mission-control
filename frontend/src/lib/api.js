@@ -93,6 +93,14 @@ export const api = {
     client.post(`/clients/${clientId}/keyword-map/analyze-page`, { urls }).then((r) => r.data),
   fetchSerp: (clientId, keyword) =>
     client.post(`/clients/${clientId}/keyword-map/serp`, { keyword }).then((r) => r.data),
+  startRefinement: (clientId, limit) =>
+    client.post(`/clients/${clientId}/keyword-map/refine`, { limit }).then((r) => r.data),
+  refinementStatus: (clientId) =>
+    client.get(`/clients/${clientId}/keyword-map/refine/status`).then((r) => r.data),
+  refinementForUrl: (clientId, url) =>
+    client.get(`/clients/${clientId}/keyword-map/refine/url`, { params: { url } }).then((r) => r.data),
+  listRefinements: (clientId) =>
+    client.get(`/clients/${clientId}/keyword-map/refinements`).then((r) => r.data),
 };
 
 export default api;

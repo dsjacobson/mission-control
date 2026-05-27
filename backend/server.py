@@ -1088,6 +1088,47 @@ async def keyword_map_serp(client_id: str, payload: SerpRequest):
     return {"ok": True, "serp": serp}
 
 
+class RefineRequest(BaseModel):
+    limit: int = 100
+
+
+@api.post("/clients/{client_id}/keyword-map/refine")
+async def keyword_map_refine_start(client_id: str, payload: RefineRequest):
+    """Start a relevance-first AI refinement of the top N URLs (by inlinks)."""
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0, "id": 1})
+    if not client:
+        raise HTTPException(404, "Client not found")
+    existing = await kw_map_lib.get_refinement_status(db, client_id)
+    if existing.get("status") == "running":
+        raise HTTPException(409, f"Refinement already running ({existing.get('completed')}/{existing.get('total')})")
+    try:
+        state = await kw_map_lib.start_refinement(db, client_id, limit=max(1, min(payload.limit, 5000)))
+    except RuntimeError as e:
+        raise HTTPException(400, str(e))
+    return state
+
+
+@api.get("/clients/{client_id}/keyword-map/refine/status")
+async def keyword_map_refine_status(client_id: str):
+    total_pages = await kw_map_lib.page_index_total(db, client_id)
+    state = await kw_map_lib.get_refinement_status(db, client_id)
+    return {"refinement": state, "page_index_total": total_pages}
+
+
+@api.get("/clients/{client_id}/keyword-map/refine/url")
+async def keyword_map_refine_one(client_id: str, url: str):
+    out = await kw_map_lib.get_url_refinement(db, client_id, url)
+    if not out:
+        raise HTTPException(404, "No refinement for this URL")
+    return out
+
+
+@api.get("/clients/{client_id}/keyword-map/refinements")
+async def keyword_map_refinements_list(client_id: str):
+    refinements = await kw_map_lib.list_url_refinements(db, client_id)
+    return {"refinements": refinements, "count": len(refinements)}
+
+
 
 
 # ============ App wiring ============

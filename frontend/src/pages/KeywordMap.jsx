@@ -3,11 +3,13 @@ import { useParams } from "react-router-dom";
 import {
   RefreshCw, Loader2, Search, ExternalLink, Star, MapPin, Scan,
   AlertTriangle, Globe, TrendingDown, ChevronRight, FileSearch, X,
-  Map as MapIcon,
+  Map as MapIcon, Sparkles, Check, Lightbulb,
 } from "lucide-react";
 import api from "../lib/api";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../components/ui/dialog";
+import { Label } from "../components/ui/label";
 import { toast } from "sonner";
 
 const STATUS_TONE = {
@@ -31,6 +33,9 @@ export default function KeywordMap() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [drawerKw, setDrawerKw] = useState(null);
   const [showSparse, setShowSparse] = useState(false);
+  const [refineModalOpen, setRefineModalOpen] = useState(false);
+  const [refinementState, setRefinementState] = useState(null);
+  const [urlRefinements, setUrlRefinements] = useState({});
 
   const load = async () => {
     setLoading(true);
@@ -44,7 +49,50 @@ export default function KeywordMap() {
     }
   };
 
-  useEffect(() => { load(); }, [clientId]);
+  const loadRefinementStatus = async () => {
+    try {
+      const r = await api.refinementStatus(clientId);
+      setRefinementState(r.refinement);
+      return r;
+    } catch {
+      return null;
+    }
+  };
+
+  const loadRefinements = async () => {
+    try {
+      const r = await api.listRefinements(clientId);
+      setUrlRefinements(r.refinements || {});
+    } catch {}
+  };
+
+  useEffect(() => {
+    load();
+    loadRefinementStatus();
+    loadRefinements();
+  }, [clientId]);
+
+  // Poll refinement progress while it's running
+  useEffect(() => {
+    if (!refinementState || refinementState.status !== "running") return;
+    let stop = false;
+    const tick = async () => {
+      if (stop) return;
+      const r = await loadRefinementStatus();
+      if (r?.refinement?.status === "done") {
+        await loadRefinements();
+        toast.success(`Refinement complete · ${r.refinement.completed}/${r.refinement.total}`);
+        return;
+      }
+      if (r?.refinement?.status === "failed") {
+        toast.error(`Refinement failed: ${r.refinement.error || "unknown"}`);
+        return;
+      }
+      setTimeout(tick, 3000);
+    };
+    setTimeout(tick, 3000);
+    return () => { stop = true; };
+  }, [refinementState?.status, refinementState?.job_id]);
 
   const onBuild = async () => {
     setBuilding(true);
@@ -106,6 +154,25 @@ export default function KeywordMap() {
             {showSparse ? "Hide sparse pages" : "Sparse pages"}
           </Button>
           <Button
+            onClick={() => setRefineModalOpen(true)}
+            disabled={refinementState?.status === "running"}
+            variant="ghost"
+            className="text-violet-300 hover:bg-violet-400/10 hover:text-violet-200 rounded-sm border border-violet-400/30"
+            data-testid="open-refine-modal"
+          >
+            {refinementState?.status === "running" ? (
+              <>
+                <Loader2 size={13} className="mr-1.5 animate-spin" />
+                Refining {refinementState.completed}/{refinementState.total}
+              </>
+            ) : (
+              <>
+                <Sparkles size={13} className="mr-1.5" />
+                Refine with AI
+              </>
+            )}
+          </Button>
+          <Button
             onClick={onBuild}
             disabled={building}
             className="bg-zinc-50 text-zinc-950 hover:bg-zinc-200 rounded-sm disabled:opacity-50"
@@ -116,6 +183,13 @@ export default function KeywordMap() {
           </Button>
         </div>
       </div>
+
+      <RefineModal
+        open={refineModalOpen}
+        onOpenChange={setRefineModalOpen}
+        clientId={clientId}
+        onStarted={(s) => { setRefinementState(s); setRefineModalOpen(false); }}
+      />
 
       {/* Stats strip */}
       <div className="grid grid-cols-2 md:grid-cols-7 gap-2">
@@ -186,11 +260,135 @@ export default function KeywordMap() {
           clientId={clientId}
           keyword={drawerKw}
           fullData={map.keywords[drawerKw]}
+          urlRefinements={urlRefinements}
           onClose={() => setDrawerKw(null)}
           onChanged={load}
         />
       )}
     </div>
+  );
+}
+
+function RefineModal({ open, onOpenChange, clientId, onStarted }) {
+  const [pageTotal, setPageTotal] = useState(0);
+  const [limit, setLimit] = useState(100);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    (async () => {
+      const r = await api.refinementStatus(clientId);
+      setPageTotal(r.page_index_total || 0);
+      if (r.page_index_total && r.page_index_total < 100) setLimit(r.page_index_total);
+    })();
+  }, [open, clientId]);
+
+  const effLimit = Math.min(Math.max(1, Number(limit) || 1), pageTotal || 5000);
+  const estCost = (effLimit * 0.002).toFixed(2);  // ~$0.001 AI + ~$0.001 DFS keyword suggestions
+  const estTime = Math.ceil(effLimit / 5 * 1.5);   // 5 in parallel, ~1.5s each
+
+  const start = async () => {
+    setBusy(true);
+    try {
+      const r = await api.startRefinement(clientId, effLimit);
+      toast.success(`Refining ${r.total} URLs… this will take a few minutes`);
+      onStarted?.(r);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed to start");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="bg-zinc-950 border-zinc-800" data-testid="refine-modal">
+        <DialogHeader>
+          <DialogTitle className="text-zinc-100 flex items-center gap-2">
+            <Sparkles size={16} className="text-violet-400" />
+            Refine with AI · relevance-first
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4 text-sm text-zinc-300 leading-relaxed">
+          <p>
+            For each URL in your Screaming Frog page index, an AI agent fetches the page,
+            reads the actual content, and picks the most <strong className="text-zinc-100">relevant</strong> primary
+            keyword — not just whatever Semrush currently sees ranking. Long-tail variants like
+            "sicilian baked cassata recipe" win over broad terms like "cassata" when they
+            fit the page better.
+          </p>
+          <p className="text-zinc-500 text-xs">
+            URLs are ranked by Inlinks (most important pages first). DataForSEO is also queried
+            for related keyword variants for each URL.
+          </p>
+
+          <div className="space-y-2 pt-2">
+            <Label className="text-xs text-zinc-400">How many URLs to refine</Label>
+            <div className="flex items-center gap-2">
+              <Input
+                type="number"
+                min="1"
+                max={pageTotal || 5000}
+                value={limit}
+                onChange={(e) => setLimit(e.target.value)}
+                className="bg-zinc-950 border-zinc-800 rounded-sm text-zinc-100 font-mono"
+                data-testid="refine-limit-input"
+              />
+              <span className="text-xs text-zinc-500 whitespace-nowrap">
+                of <span className="text-zinc-300">{pageTotal.toLocaleString()}</span> pages
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-1.5 pt-1">
+              {[25, 100, 250, 500, pageTotal].filter((n, i, a) => n && a.indexOf(n) === i).map((n) => (
+                <button
+                  key={n}
+                  onClick={() => setLimit(n)}
+                  className={`px-2 py-0.5 rounded-sm border font-mono text-[11px] ${
+                    Number(limit) === n
+                      ? "border-violet-400/40 bg-violet-400/15 text-violet-200"
+                      : "border-zinc-800 bg-zinc-900 text-zinc-400 hover:text-zinc-200"
+                  }`}
+                  data-testid={`refine-preset-${n}`}
+                >
+                  {n === pageTotal ? `All (${n})` : n.toLocaleString()}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 pt-2">
+            <div className="rounded-sm border border-zinc-800 bg-zinc-900 px-3 py-2">
+              <div className="text-[10px] font-mono uppercase tracking-wider text-zinc-500">Est. cost</div>
+              <div className="text-zinc-100 font-heading text-base mt-0.5">${estCost}</div>
+            </div>
+            <div className="rounded-sm border border-zinc-800 bg-zinc-900 px-3 py-2">
+              <div className="text-[10px] font-mono uppercase tracking-wider text-zinc-500">Est. time</div>
+              <div className="text-zinc-100 font-heading text-base mt-0.5">~{estTime}s</div>
+            </div>
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button
+            onClick={() => onOpenChange(false)}
+            variant="ghost"
+            className="text-zinc-400 hover:bg-zinc-800 rounded-sm"
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={start}
+            disabled={busy || !pageTotal}
+            className="bg-violet-400/20 hover:bg-violet-400/30 text-violet-200 border border-violet-400/40 rounded-sm"
+            data-testid="refine-start-btn"
+          >
+            {busy ? <Loader2 size={13} className="mr-1.5 animate-spin" /> : <Sparkles size={13} className="mr-1.5" />}
+            Refine {effLimit.toLocaleString()} URLs
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -366,10 +564,29 @@ function truncatePath(url) {
   }
 }
 
-function KeywordDrawer({ clientId, keyword, fullData, onClose, onChanged }) {
+function normalizeUrl(url) {
+  if (!url) return "";
+  let s = url.trim().toLowerCase();
+  s = s.replace(/^https?:\/\//, "");
+  if (s.startsWith("www.")) s = s.slice(4);
+  s = s.split("#")[0];
+  s = s.replace(/\/+$/, "");
+  return s;
+}
+
+function KeywordDrawer({ clientId, keyword, fullData, urlRefinements, onClose, onChanged }) {
   const [targetUrl, setTargetUrl] = useState(fullData?.target_url || "");
   const [busy, setBusy] = useState(false);
   const [fetchingSerp, setFetchingSerp] = useState(false);
+
+  // Look up AI refinement for the current URL of this keyword
+  const refinement = useMemo(() => {
+    if (!fullData?.current_url || !urlRefinements) return null;
+    const norm = normalizeUrl(fullData.current_url);
+    return urlRefinements[norm] || null;
+  }, [fullData?.current_url, urlRefinements]);
+
+  const myRelevance = refinement?.relevance_per_mapped?.[keyword.toLowerCase()];
 
   const save = async (patch) => {
     setBusy(true);
@@ -417,6 +634,8 @@ function KeywordDrawer({ clientId, keyword, fullData, onClose, onChanged }) {
           <Metric label="Volume" value={fullData?.search_volume?.toLocaleString() ?? "—"} />
           <Metric label="Traffic" value={fullData?.traffic?.toLocaleString() ?? "—"} />
         </div>
+
+        {refinement && <RefinementPanel refinement={refinement} myKeyword={keyword} myRelevance={myRelevance} onApplyTarget={(url) => { setTargetUrl(url); }} />}
 
         {/* Priority + target */}
         <div className="space-y-2">
@@ -532,6 +751,71 @@ function Metric({ label, value }) {
     <div className="rounded-sm border border-zinc-800 bg-zinc-950 px-2.5 py-2 text-center">
       <div className="text-[9px] font-mono text-zinc-500 uppercase tracking-wider">{label}</div>
       <div className="text-zinc-100 font-heading text-base mt-0.5">{value}</div>
+    </div>
+  );
+}
+
+function RefinementPanel({ refinement, myKeyword, myRelevance, onApplyTarget }) {
+  const relTone =
+    myRelevance === "matches" ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-300"
+    : myRelevance === "better_alternative" ? "border-amber-400/30 bg-amber-400/10 text-amber-300"
+    : myRelevance === "not_relevant" ? "border-rose-400/30 bg-rose-400/10 text-rose-300"
+    : "border-zinc-700 bg-zinc-900 text-zinc-400";
+  const relLabel =
+    myRelevance === "matches" ? "Genuinely relevant to this URL"
+    : myRelevance === "better_alternative" ? "Relevant, but more specific phrasing exists"
+    : myRelevance === "not_relevant" ? "Not the right keyword for this URL"
+    : null;
+
+  return (
+    <div className="rounded-sm border border-violet-400/20 bg-violet-400/[0.04] p-3.5 space-y-3" data-testid="kw-drawer-refinement">
+      <div className="flex items-center gap-2 text-violet-300">
+        <Sparkles size={12} />
+        <span className="font-mono uppercase tracking-wider text-[10px]">AI relevance pass</span>
+        {refinement.confidence != null && (
+          <span className="ml-auto text-[10px] font-mono text-zinc-500">
+            confidence {Math.round((refinement.confidence || 0) * 100)}%
+          </span>
+        )}
+      </div>
+
+      <div>
+        <div className="text-[10px] font-mono uppercase tracking-wider text-zinc-500 mb-0.5">
+          Recommended primary for this URL
+        </div>
+        <div className="text-zinc-100 font-heading text-sm">{refinement.recommended_primary}</div>
+        {refinement.rationale && (
+          <div className="text-[11px] text-zinc-400 mt-1 italic leading-relaxed">{refinement.rationale}</div>
+        )}
+      </div>
+
+      {myRelevance && (
+        <div className="space-y-1">
+          <div className="text-[10px] font-mono uppercase tracking-wider text-zinc-500">
+            Verdict on "{myKeyword}"
+          </div>
+          <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-sm border ${relTone} font-mono text-[10px]`}>
+            {myRelevance === "matches" && <Check size={9} />}
+            {myRelevance === "better_alternative" && <Lightbulb size={9} />}
+            {myRelevance === "not_relevant" && <X size={9} />}
+            <span className="uppercase">{myRelevance.replace("_", " ")}</span>
+          </span>
+          <div className="text-[11px] text-zinc-500">{relLabel}</div>
+        </div>
+      )}
+
+      {refinement.supporting_keywords?.length > 0 && (
+        <div>
+          <div className="text-[10px] font-mono uppercase tracking-wider text-zinc-500 mb-1">Supporting keywords</div>
+          <div className="flex flex-wrap gap-1">
+            {refinement.supporting_keywords.map((s, i) => (
+              <span key={i} className="px-1.5 py-0.5 rounded-sm border border-zinc-800 bg-zinc-900 text-zinc-300 font-mono text-[10px]">
+                {s}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
