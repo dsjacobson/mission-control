@@ -175,8 +175,12 @@ only), Screaming Frog MCP.
 ## Backlog
 ### P0 — next session
 - Inline result editing inside the approval dialog (currently shows JSON only).
+- "Plan from this keyword" action in Keyword Map (convert map rows to executable technical_action approvals).
+- Bulk sprint plan from N priority keywords (weekly sprint button).
 
 ### P1
+- Strategy Synthesis workflow (`optimization_strategy` run type) consuming Keyword Map, SERP snapshots, SF audit, and Competitor data into a 30-day roadmap.
+- Update existing workflows (Technical Audit, Strategy Sprint) to read the new `keyword_map` data.
 - Browser automation / scraper for autonomous Semrush fetch (e.g. Openclaw)
   so the CSV uploads can be auto-refreshed nightly.
 - Scheduled background jobs (nightly auto-refresh of GSC/GA, weekly strategy
@@ -184,6 +188,7 @@ only), Screaming Frog MCP.
 - WordPress draft publisher (REST API, draft-only).
 - Per-agent prompt/version tracking + diff view.
 - Pagination + filters on runs/approvals lists.
+- Refactor: server.py is 1345 lines — split competitor + SF bridge routers into separate modules.
 
 ### P2
 - Branded client PDF report generator.
@@ -191,6 +196,24 @@ only), Screaming Frog MCP.
 - Electron packaging + Windows installer (would let the SF bridge ship inside
   the app instead of as a separate script).
 - Local model fallback for selected tasks.
+- Cannibalization auto-resolver (suggest 301 / canonical / consolidation).
+
+### 2026-02 — Competitive Analysis (this session)
+- `backend/competitors_enrich.py` — per-competitor metrics storage shape (metrics, ranked_keywords, semrush_uploads, sf_crawl) + comparison view + client metrics refresh.
+- New endpoints:
+  - `POST /api/clients/{id}/competitors/{cid}/metrics/refresh` — DataForSEO bulk backlinks (DR/PR/backlinks/spam).
+  - `POST /api/clients/{id}/competitors/{cid}/keywords/refresh?limit=N` — DataForSEO Labs ranked_keywords.
+  - `POST /api/clients/{id}/competitors/{cid}/semrush/upload` — per-competitor Semrush CSV ingest.
+  - `POST /api/clients/{id}/competitors/{cid}/sf-crawl/upload` — per-competitor SF CSV ingest (issues_overview / internal_all).
+  - `POST /api/clients/{id}/competitors/{cid}/sf-bridge/crawl` — trigger local SF crawl for competitor (10–200 URLs).
+  - `POST /api/clients/{id}/competitors/{cid}/sf-bridge/crawl/{job_id}/ingest` — pull crawl CSVs into competitor.
+  - `GET /api/clients/{id}/competitors/comparison` — client vs competitors side-by-side rows + deltas[].
+  - `POST /api/clients/{id}/metrics/refresh` — refresh client's own DR/backlinks for the comparison view.
+- Frontend:
+  - `pages/Competitors.jsx` — Overview screen with comparison table, deltas callout, add-competitor form, tracked-competitor cards with "View" buttons.
+  - `pages/CompetitorDetail.jsx` (new) — Domain metrics, Ranked keywords table, Semrush uploads, SF crawl section with bridge crawl trigger + status polling.
+  - `lib/api.js` — competitor + sf-bridge route helpers.
+- Verified: 13/13 backend tests pass (iteration_4.json), frontend flows verified end-to-end.
 
 ## Notes
 - `EMERGENT_LLM_KEY` lives in `/app/backend/.env`.
