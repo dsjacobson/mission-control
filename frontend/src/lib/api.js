@@ -125,6 +125,8 @@ export const api = {
     client.get(`/clients/${clientId}/competitors/comparison`).then((r) => r.data),
   refreshClientMetrics: (clientId) =>
     client.post(`/clients/${clientId}/metrics/refresh`).then((r) => r.data),
+  refreshAllCompetitorMetrics: (clientId) =>
+    client.post(`/clients/${clientId}/competitors/refresh-all`).then((r) => r.data),
 
   // Competitor SF bridge crawl
   competitorSfBridgeCrawl: (clientId, competitorId, max_urls = 200) =>

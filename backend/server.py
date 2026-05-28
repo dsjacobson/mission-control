@@ -222,6 +222,47 @@ async def client_refresh_metrics(client_id: str):
     return {"ok": True, "metrics": metrics}
 
 
+@api.post("/clients/{client_id}/competitors/refresh-all")
+async def refresh_all_competitor_metrics(client_id: str):
+    """Bulk-refresh metrics for the client + every tracked competitor. Runs them
+    in parallel so a 5-competitor refresh takes ~the same time as 1."""
+    if not (semrush.is_configured() or dfs_lib.is_configured()):
+        raise HTTPException(400, "Neither Semrush nor DataForSEO is configured")
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0, "competitors": 1})
+    if not client:
+        raise HTTPException(404, "Client not found")
+    competitors = client.get("competitors") or []
+
+    import asyncio as _asyncio
+
+    async def _client_task():
+        try:
+            await competitors_enrich.refresh_client_metrics(db, client_id)
+            return ("client", "ok", None)
+        except Exception as e:  # noqa: BLE001
+            return ("client", "error", str(e)[:160])
+
+    async def _comp_task(cid: str, cname: str):
+        try:
+            await competitors_enrich.refresh_metrics(db, client_id, cid)
+            return (cname, "ok", None)
+        except Exception as e:  # noqa: BLE001
+            return (cname, "error", str(e)[:160])
+
+    tasks = [_client_task()] + [_comp_task(c["id"], c.get("name", c.get("domain", "?"))) for c in competitors if c.get("id")]
+    outcomes = await _asyncio.gather(*tasks, return_exceptions=False)
+
+    succeeded = [o for o in outcomes if o[1] == "ok"]
+    failed = [{"name": o[0], "error": o[2]} for o in outcomes if o[1] != "ok"]
+    updated = await db.clients.find_one({"id": client_id}, {"_id": 0})
+    return {
+        "ok": len(failed) == 0,
+        "refreshed": len(succeeded),
+        "failed": failed,
+        "client": updated,
+    }
+
+
 # ---------- Competitor SF bridge crawl ----------
 
 class CompetitorSfCrawlRequest(BaseModel):

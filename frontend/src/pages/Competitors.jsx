@@ -18,6 +18,7 @@ export default function Competitors() {
   const [form, setForm] = useState({ name: "", domain: "", notes: "" });
   const [busy, setBusy] = useState(false);
   const [refreshingClient, setRefreshingClient] = useState(false);
+  const [refreshingAll, setRefreshingAll] = useState(false);
 
   useEffect(() => {
     setActiveClientId(clientId);
@@ -50,6 +51,24 @@ export default function Competitors() {
       toast.error(e?.response?.data?.detail || "Refresh failed");
     } finally {
       setRefreshingClient(false);
+    }
+  };
+
+  const refreshAll = async () => {
+    setRefreshingAll(true);
+    try {
+      const r = await api.refreshAllCompetitorMetrics(clientId);
+      if (r.failed?.length) {
+        toast.warning(`Refreshed ${r.refreshed} · ${r.failed.length} failed: ${r.failed.map((f) => f.name).join(", ")}`);
+      } else {
+        toast.success(`Refreshed ${r.refreshed} target${r.refreshed === 1 ? "" : "s"}`);
+      }
+      await loadComparison();
+      if (r.client) setClient(r.client);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Bulk refresh failed");
+    } finally {
+      setRefreshingAll(false);
     }
   };
 
@@ -136,7 +155,23 @@ export default function Competitors() {
         </div>
       </Section>
 
-      <Section title="Competitor comparison" description="Side-by-side metrics. Pulls authority + backlinks + organic traffic from Semrush (your Semrush MCP key)." testId="comparison-section">
+      <Section
+        title="Competitor comparison"
+        description="Side-by-side metrics. Pulls authority + backlinks + organic traffic from Semrush (your Semrush MCP key)."
+        testId="comparison-section"
+        action={
+          <Button
+            onClick={refreshAll}
+            disabled={refreshingAll || !client?.competitors?.length}
+            className="bg-emerald-400/90 text-zinc-950 hover:bg-emerald-300 rounded-sm h-8 text-xs"
+            data-testid="refresh-all-competitors-btn"
+            title="Refresh metrics for the client + every tracked competitor in parallel"
+          >
+            {refreshingAll ? <Loader2 size={12} className="mr-1.5 animate-spin" /> : <RefreshCw size={12} className="mr-1.5" />}
+            Refresh all
+          </Button>
+        }
+      >
         <ComparisonOverview comparison={comparison} onRefreshClient={refreshClientMetrics} refreshingClient={refreshingClient} />
       </Section>
 
