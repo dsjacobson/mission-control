@@ -125,6 +125,16 @@ export const api = {
     client.get(`/clients/${clientId}/competitors/comparison`).then((r) => r.data),
   refreshClientMetrics: (clientId) =>
     client.post(`/clients/${clientId}/metrics/refresh`).then((r) => r.data),
+
+  // Competitor SF bridge crawl
+  competitorSfBridgeCrawl: (clientId, competitorId, max_urls = 200) =>
+    client.post(`/clients/${clientId}/competitors/${competitorId}/sf-bridge/crawl`, { max_urls }).then((r) => r.data),
+  competitorSfBridgeIngest: (clientId, competitorId, jobId) =>
+    client.post(`/clients/${clientId}/competitors/${competitorId}/sf-bridge/crawl/${jobId}/ingest`).then((r) => r.data),
+  sfBridgeStatus: (clientId, jobId) =>
+    client.get(`/clients/${clientId}/integrations/sf-bridge/crawl/${jobId}`).then((r) => r.data),
+  sfBridgeConfigStatus: (clientId) =>
+    client.get(`/clients/${clientId}/integrations/sf-bridge/status`).then((r) => r.data),
 };
 
 export default api;

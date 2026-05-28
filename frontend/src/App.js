@@ -10,6 +10,7 @@ import ClientsList from "@/pages/ClientsList";
 import ClientWorkspace from "@/pages/ClientWorkspace";
 import Workflows from "@/pages/Workflows";
 import Competitors from "@/pages/Competitors";
+import CompetitorDetail from "@/pages/CompetitorDetail";
 import Integrations from "@/pages/Integrations";
 import Approvals from "@/pages/Approvals";
 import Deliverables from "@/pages/Deliverables";
@@ -33,6 +34,7 @@ function App() {
               <Route path="/clients/:clientId" element={<ClientWorkspace />} />
               <Route path="/clients/:clientId/workflows" element={<Workflows />} />
               <Route path="/clients/:clientId/competitors" element={<Competitors />} />
+              <Route path="/clients/:clientId/competitors/:competitorId" element={<CompetitorDetail />} />
               <Route path="/clients/:clientId/integrations" element={<Integrations />} />
               <Route path="/clients/:clientId/approvals" element={<Approvals />} />
               <Route path="/clients/:clientId/deliverables" element={<Deliverables />} />

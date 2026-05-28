@@ -1,0 +1,31 @@
+{
+  "summary": "Verified Competitive Analysis backend endpoints + new CompetitorDetail frontend page. 13/13 backend tests pass against live DataForSEO (configured). Frontend: Overview renders comparison table + tracked-competitor cards with View buttons; CompetitorDetail page renders all 4 cards (metrics, keywords, Semrush, SF) with SfBridgePanel correctly showing 'bridge not reachable' warning. Live Pull metrics / Pull keywords / refresh-client-metrics all return 200 and update the UI (Giallo Zafferano comparison row went from 0 → 200 ranked KWs after refresh). Back navigation works.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_competitor_detail_api.py",
+    "/app/test_reports/pytest/competitor_detail.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is now 1345 lines — borderline. Consider splitting competitor + SF bridge routers into separate files for maintainability.",
+    "CompetitorDetail.jsx: useEffect that restores in-flight crawl from client.competitors[].sf_crawl.active_job will silently no-op if SfBridge isn't configured (ready=false) — minor consideration but acceptable.",
+    "competitor_sf_bridge_crawl clamps max_urls to 10-200 server-side ✓; frontend also clamps in input handler ✓ — defense in depth is good.",
+    "build_comparison() uses a magic number `comp_dr > client_dr + 50` for delta thresholds on a 0-1000 DR scale (== 5 normalized points). Consider extracting to a named constant for clarity.",
+    "refreshCompetitorKeywords passes limit via query params in frontend ✓ — matches backend signature."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_competitor_detail_api.py (new — 13 tests)"
+  ],
+  "success_rate": { "backend": "100% (13/13)", "frontend": "100% (all required flows)" },
+  "test_credentials": "N/A (no auth — single-user internal app). Used existing client e918ee9a-a135-4c5a-ae0b-f26f2f690117 (Cooking Italians) + existing competitor Giallo Zafferano (id 3886dc93-3f19-4e32-9e12-e65b35793f98).",
+  "seed_data_creation": "Each test creates a TEST_-prefixed competitor on the existing Cooking Italians client and removes it via fixture teardown. Live DataForSEO calls were minimal (1 backlinks_bulk + 1 ranked_keywords/25 + 1 client backlinks_bulk).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend regression: pytest /app/backend/tests/test_competitor_detail_api.py -v. Tests are tolerant of DataForSEO 400/502 fallbacks (currently configured so they hit 200). Frontend e2e: route /clients/{cid}/competitors/{competitorId} contains the CompetitorDetail page; key data-testids: competitor-detail, refresh-metrics, refresh-keywords, upload-competitor-semrush, upload-competitor-sf, back-to-competitors, bridge-not-ready (when bridge unconfigured), start-competitor-sf-crawl (when configured), competitor-crawl-max-input, active-competitor-crawl. Overview: view-competitor-{id}, competitor-card-{id}, remove-competitor-{id}, comparison-row-{client|id}, refresh-client-metrics, deltas-callout. The tracked-competitor cards load asynchronously — always wait_for_selector before querying. SF bridge is intentionally NOT configured for this client, so the bridge crawl/ingest endpoints correctly return HTTP 400 with detail='Bridge not configured'.",
+  "rca of the issue": "No bugs surfaced. Note: when running Playwright, the sonner toasts can auto-dismiss within 3-4s; if you need to assert toast content, capture them within ~2s of the click rather than after a long wait. The functional outcome (UI/DB state change) is the more reliable indicator."
+}

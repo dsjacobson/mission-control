@@ -2,18 +2,25 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import {
   ArrowLeft, RefreshCw, Loader2, Upload, FileSpreadsheet, Plug, ExternalLink,
-  TrendingUp, BarChart3, Sparkles,
+  TrendingUp, BarChart3, Sparkles, PlayCircle, AlertCircle,
 } from "lucide-react";
 import api from "../lib/api";
 import { Button } from "../components/ui/button";
+import { Input } from "../components/ui/input";
+import { Label } from "../components/ui/label";
 import { toast } from "sonner";
 
 export default function CompetitorDetail() {
   const { clientId, competitorId } = useParams();
   const [client, setClient] = useState(null);
   const [refreshing, setRefreshing] = useState({ metrics: false, keywords: false });
+  const [bridgeStatus, setBridgeStatus] = useState(null);
+  const [activeCrawl, setActiveCrawl] = useState(null);
+  const [crawlMaxUrls, setCrawlMaxUrls] = useState(200);
+  const [startingCrawl, setStartingCrawl] = useState(false);
   const semrushInput = useRef();
   const sfInput = useRef();
+  const pollRef = useRef(null);
 
   const competitor = useMemo(
     () => (client?.competitors || []).find((c) => c.id === competitorId) || null,
@@ -30,6 +37,65 @@ export default function CompetitorDetail() {
   };
 
   useEffect(() => { load(); }, [clientId, competitorId]);
+
+  useEffect(() => {
+    api.sfBridgeConfigStatus(clientId).then(setBridgeStatus).catch(() => setBridgeStatus({ configured: false }));
+  }, [clientId]);
+
+  // Restore in-flight crawl from server state
+  useEffect(() => {
+    const active = client?.competitors?.find((c) => c.id === competitorId)?.sf_crawl?.active_job;
+    if (active?.job_id && !activeCrawl) setActiveCrawl(active);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [client, competitorId]);
+
+  // Poll active SF crawl
+  useEffect(() => {
+    if (!activeCrawl?.job_id) {
+      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+      return;
+    }
+    const tick = async () => {
+      try {
+        const st = await api.sfBridgeStatus(clientId, activeCrawl.job_id);
+        const status = (st.status || "").toLowerCase();
+        setActiveCrawl((prev) => prev ? { ...prev, status: st.status, urls_crawled: st.urls_crawled } : prev);
+        if (["done", "completed", "finished", "success"].includes(status)) {
+          clearInterval(pollRef.current); pollRef.current = null;
+          toast.success("Crawl complete — ingesting…");
+          try {
+            await api.competitorSfBridgeIngest(clientId, competitorId, activeCrawl.job_id);
+            toast.success("Crawl ingested");
+            setActiveCrawl(null);
+            await load();
+          } catch (e) {
+            toast.error(e?.response?.data?.detail || "Ingest failed");
+          }
+        } else if (["failed", "error"].includes(status)) {
+          clearInterval(pollRef.current); pollRef.current = null;
+          toast.error("Crawl failed");
+          setActiveCrawl(null);
+        }
+      } catch (e) { /* keep polling */ }
+    };
+    tick();
+    pollRef.current = setInterval(tick, 5000);
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeCrawl?.job_id]);
+
+  const startCrawl = async () => {
+    setStartingCrawl(true);
+    try {
+      const r = await api.competitorSfBridgeCrawl(clientId, competitorId, Math.min(crawlMaxUrls, 200));
+      toast.success(`Crawl started · ${r.job_id}`);
+      setActiveCrawl({ job_id: r.job_id, url: competitor?.domain, status: r.status, started_at: new Date().toISOString() });
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed to start crawl");
+    } finally {
+      setStartingCrawl(false);
+    }
+  };
 
   const refreshMetrics = async () => {
     setRefreshing((r) => ({ ...r, metrics: true }));
@@ -226,10 +292,20 @@ export default function CompetitorDetail() {
           </>
         }
       >
+        <SfBridgePanel
+          clientId={clientId}
+          competitor={competitor}
+          bridgeStatus={bridgeStatus}
+          activeCrawl={activeCrawl}
+          crawlMaxUrls={crawlMaxUrls}
+          setCrawlMaxUrls={setCrawlMaxUrls}
+          onStart={startCrawl}
+          starting={startingCrawl}
+        />
         {sf.last_uploaded_at ? (
-          <SfCrawlSummary sf={sf} />
+          <div className="mt-3"><SfCrawlSummary sf={sf} /></div>
         ) : (
-          <Empty msg="Upload an issues_overview or internal_all CSV exported from Screaming Frog for this competitor's site." />
+          <div className="mt-3"><Empty msg="Upload an issues_overview or internal_all CSV, or trigger a crawl via your local bridge above." /></div>
         )}
       </Section>
     </div>
@@ -356,6 +432,61 @@ function SfCrawlSummary({ sf }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function SfBridgePanel({ clientId, competitor, bridgeStatus, activeCrawl, crawlMaxUrls, setCrawlMaxUrls, onStart, starting }) {
+  const ready = bridgeStatus?.configured && bridgeStatus?.health?.ok;
+  if (!ready) {
+    return (
+      <div className="rounded-sm border border-zinc-800 bg-zinc-900 p-3 flex items-start gap-3" data-testid="bridge-not-ready">
+        <AlertCircle size={13} className="text-amber-400 shrink-0 mt-0.5" />
+        <div className="text-xs text-zinc-400">
+          Local Screaming Frog bridge isn't reachable.{" "}
+          <Link to={`/clients/${clientId}/integrations`} className="text-emerald-300 hover:underline">Configure it</Link>{" "}
+          to trigger competitor crawls in-app.
+        </div>
+      </div>
+    );
+  }
+  if (activeCrawl?.job_id) {
+    return (
+      <div className="rounded-sm border border-emerald-400/30 bg-emerald-400/[0.06] p-3 flex items-center gap-3" data-testid="active-competitor-crawl">
+        <Loader2 size={13} className="text-emerald-400 animate-spin shrink-0" />
+        <div className="text-xs text-zinc-200 flex-1">
+          <div>Crawling <span className="font-mono text-emerald-300">{activeCrawl.url}</span> · {activeCrawl.status || "running"}</div>
+          {activeCrawl.urls_crawled != null && (
+            <div className="text-[10px] text-zinc-500 font-mono mt-0.5">{activeCrawl.urls_crawled} URLs crawled · job {activeCrawl.job_id}</div>
+          )}
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="rounded-sm border border-zinc-800 bg-zinc-900 p-3 flex flex-wrap items-end gap-3" data-testid="start-competitor-crawl-panel">
+      <div className="grid gap-1">
+        <Label className="text-[10px] font-mono uppercase tracking-wider text-zinc-500">Max URLs (≤200)</Label>
+        <Input
+          type="number"
+          min={10}
+          max={200}
+          step={10}
+          value={crawlMaxUrls}
+          onChange={(e) => setCrawlMaxUrls(Math.min(200, Math.max(10, parseInt(e.target.value || "200", 10))))}
+          className="bg-zinc-950 border-zinc-800 rounded-sm text-zinc-100 w-24 h-8 text-xs"
+          data-testid="competitor-crawl-max-input"
+        />
+      </div>
+      <Button
+        onClick={onStart}
+        disabled={starting || !competitor?.domain}
+        className="bg-emerald-400/90 text-zinc-950 hover:bg-emerald-300 rounded-sm h-8 text-xs"
+        data-testid="start-competitor-sf-crawl"
+      >
+        {starting ? <Loader2 size={12} className="mr-1.5 animate-spin" /> : <PlayCircle size={12} className="mr-1.5" />}
+        Crawl {competitor?.domain} via local bridge
+      </Button>
     </div>
   );
 }

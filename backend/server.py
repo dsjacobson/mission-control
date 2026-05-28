@@ -221,6 +221,119 @@ async def client_refresh_metrics(client_id: str):
     return {"ok": True, "metrics": metrics}
 
 
+# ---------- Competitor SF bridge crawl ----------
+
+class CompetitorSfCrawlRequest(BaseModel):
+    max_urls: int = 200
+
+
+@api.post("/clients/{client_id}/competitors/{competitor_id}/sf-bridge/crawl")
+async def competitor_sf_bridge_crawl(
+    client_id: str,
+    competitor_id: str,
+    payload: CompetitorSfCrawlRequest = CompetitorSfCrawlRequest(),
+):
+    """Trigger an SF crawl for a competitor domain via the local bridge.
+    Capped at 200 URLs to keep things fast/cheap."""
+    cfg = await sf_bridge.get_config(db, client_id)
+    if not cfg:
+        raise HTTPException(400, "Bridge not configured")
+    c = await competitors_enrich._get_competitor(db, client_id, competitor_id)
+    if not c:
+        raise HTTPException(404, "Competitor not found")
+    domain = (c.get("domain") or "").strip()
+    if not domain:
+        raise HTTPException(400, "Competitor has no domain")
+    url = domain if domain.startswith(("http://", "https://")) else f"https://{domain}"
+    max_urls = max(10, min(payload.max_urls, 200))
+    try:
+        started = await sf_bridge.start_crawl(
+            cfg["base_url"], cfg.get("token"), url, max_urls=max_urls,
+        )
+    except sf_bridge.BridgeError as e:
+        raise HTTPException(502, str(e))
+    except Exception as e:
+        raise HTTPException(502, f"Could not reach bridge: {str(e) or type(e).__name__}")
+    job_id = started.get("job_id")
+    await db.clients.update_one(
+        {"id": client_id, "competitors.id": competitor_id},
+        {"$set": {"competitors.$.sf_crawl.active_job": {
+            "job_id": job_id,
+            "url": url,
+            "max_urls": max_urls,
+            "started_at": now_iso(),
+            "status": started.get("status", "running"),
+        }}},
+    )
+    return {"ok": True, "job_id": job_id, "status": started.get("status")}
+
+
+@api.post("/clients/{client_id}/competitors/{competitor_id}/sf-bridge/crawl/{job_id}/ingest")
+async def competitor_sf_bridge_ingest(client_id: str, competitor_id: str, job_id: str):
+    """Pull issues_overview + internal_all CSVs from the bridge and save under the competitor."""
+    cfg = await sf_bridge.get_config(db, client_id)
+    if not cfg:
+        raise HTTPException(400, "Bridge not configured")
+    c = await competitors_enrich._get_competitor(db, client_id, competitor_id)
+    if not c:
+        raise HTTPException(404, "Competitor not found")
+    try:
+        files = await sf_bridge.list_files(cfg["base_url"], cfg.get("token"), job_id)
+    except sf_bridge.BridgeError as e:
+        raise HTTPException(502, str(e))
+    except Exception as e:
+        raise HTTPException(502, f"Could not reach bridge: {str(e) or type(e).__name__}")
+    if not files:
+        raise HTTPException(400, "No CSVs available yet — wait for the crawl to finish")
+
+    def _is_issues_overview(f):
+        low = f.lower()
+        return "issues_overview" in low and low.endswith(".csv")
+
+    def _is_internal_all(f):
+        low = f.lower()
+        return ("internal_all" in low or low.endswith("internal_all.csv")) and low.endswith(".csv")
+
+    issues_files = [f for f in files if _is_issues_overview(f)]
+    internal_files = [f for f in files if _is_internal_all(f)]
+    response: Dict[str, Any] = {"ok": True, "ingested": {}}
+
+    if issues_files:
+        chosen = issues_files[0]
+        try:
+            text = await sf_bridge.fetch_file(cfg["base_url"], cfg.get("token"), job_id, chosen)
+        except Exception as e:
+            raise HTTPException(502, f"Could not fetch {chosen}: {str(e) or type(e).__name__}")
+        parsed = screamingfrog.parse_csv(text)
+        if parsed.get("format") == "issues_overview":
+            await competitors_enrich.save_sf_crawl(db, client_id, competitor_id, parsed, filename=f"bridge:{chosen}")
+            response["ingested"]["issues_overview"] = {
+                "file": chosen,
+                "rows": parsed.get("rows"),
+                "summary": parsed.get("summary"),
+            }
+
+    if internal_files:
+        chosen = internal_files[0]
+        try:
+            text = await sf_bridge.fetch_file(cfg["base_url"], cfg.get("token"), job_id, chosen)
+        except Exception as e:
+            response["ingested"]["internal_all_error"] = str(e) or type(e).__name__
+        else:
+            parsed_int = screamingfrog.parse_csv(text)
+            if parsed_int.get("format") == "internal_all":
+                await competitors_enrich.save_sf_crawl(db, client_id, competitor_id, parsed_int, filename=f"bridge:{chosen}")
+                response["ingested"]["internal_all"] = {
+                    "file": chosen,
+                    "rows": parsed_int.get("rows"),
+                    "page_index_size": parsed_int.get("summary", {}).get("page_index_size", 0),
+                }
+
+    if not response["ingested"]:
+        raise HTTPException(400, "No recognisable SF CSVs found in this job")
+    return response
+
+
 
 
 # ============ Integrations ============
