@@ -199,24 +199,28 @@ export default function CompetitorDetail() {
             data-testid="refresh-metrics"
           >
             {refreshing.metrics ? <Loader2 size={12} className="animate-spin mr-1.5" /> : <RefreshCw size={12} className="mr-1.5" />}
-            {m.refreshed_at ? "Refresh" : "Pull metrics"}
+            {m.refreshed_at ? "Refresh" : "Pull metrics (Semrush)"}
           </Button>
         }
       >
         {m.refreshed_at ? (
           <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
-            <MetricTile label="Domain Rating" value={m.domain_rating != null ? Math.round(m.domain_rating / 10) : null} max={100} tone="emerald" />
-            <MetricTile label="Page Rating" value={m.page_rating != null ? Math.round(m.page_rating / 10) : null} max={100} tone="sky" />
+            <MetricTile label="Authority Score" value={m.authority_score} tone="emerald" />
             <MetricTile label="Backlinks" value={fmt(m.backlinks)} />
             <MetricTile label="Ref. domains" value={fmt(m.referring_domains)} />
             <MetricTile label="Dofollow domains" value={fmt(m.referring_domains_dofollow)} tone="emerald" />
-            <MetricTile label="Spam score" value={m.spam_score} tone={m.spam_score >= 50 ? "rose" : m.spam_score >= 30 ? "amber" : "zinc"} />
+            <MetricTile label="Organic KWs" value={fmt(m.organic_keywords)} tone="sky" />
+            <MetricTile label="Organic traffic" value={fmt(m.organic_traffic)} tone="sky" />
           </div>
         ) : (
-          <Empty msg="No DataForSEO metrics yet — click Pull metrics (~$0.003)." />
+          <Empty msg="No metrics yet — click Refresh to pull live backlinks + traffic from Semrush." />
         )}
         {m.refreshed_at && (
-          <div className="text-[10px] font-mono text-zinc-600 mt-2">Refreshed {new Date(m.refreshed_at).toLocaleString()}</div>
+          <div className="text-[10px] font-mono text-zinc-600 mt-2">
+            Refreshed {new Date(m.refreshed_at).toLocaleString()} · source: {m.source || "—"}
+            {m.domain_rating != null && <> · DR {Math.round(m.domain_rating / 10)} (DataForSEO)</>}
+            {m.spam_score != null && <> · spam {m.spam_score}</>}
+          </div>
         )}
       </Section>
 

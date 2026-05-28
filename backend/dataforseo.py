@@ -44,12 +44,31 @@ async def _post(path: str, payload: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 def _first_result(body: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """DataForSEO returns tasks[0].result; flatten safely."""
+    """DataForSEO returns tasks[0].result; flatten safely.
+    Raises AccessDeniedError if the task came back with a subscription-required error."""
     tasks = body.get("tasks") or []
     if not tasks:
         return []
-    result = tasks[0].get("result") or []
+    task = tasks[0]
+    sc = task.get("status_code")
+    if sc and sc >= 40000:
+        msg = task.get("status_message") or f"DataForSEO error {sc}"
+        if sc == 40204:
+            raise AccessDeniedError(msg)
+        # other 4xx — let caller decide; still raise so we don't silently return nulls
+        raise DataForSEOError(f"{sc}: {msg}")
+    result = task.get("result") or []
     return result
+
+
+class DataForSEOError(RuntimeError):
+    pass
+
+
+class AccessDeniedError(DataForSEOError):
+    """Raised when a DataForSEO sub-API (e.g. Backlinks) isn't on the user's subscription."""
+    pass
+
 
 
 async def bulk_keyword_difficulty(

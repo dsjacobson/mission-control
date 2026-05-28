@@ -33,6 +33,7 @@ import gsc
 import ga
 import screamingfrog
 import semrush_csv
+import semrush
 import sf_bridge
 import executor
 import keyword_map as kw_map_lib
@@ -146,12 +147,12 @@ async def remove_competitor(client_id: str, competitor_id: str):
 
 @api.post("/clients/{client_id}/competitors/{competitor_id}/metrics/refresh")
 async def competitor_refresh_metrics(client_id: str, competitor_id: str):
-    if not dfs_lib.is_configured():
-        raise HTTPException(400, "DataForSEO not configured")
+    if not (semrush.is_configured() or dfs_lib.is_configured()):
+        raise HTTPException(400, "Neither Semrush nor DataForSEO is configured")
     try:
         await competitors_enrich.refresh_metrics(db, client_id, competitor_id)
     except RuntimeError as e:
-        raise HTTPException(404, str(e))
+        raise HTTPException(404 if "not found" in str(e).lower() else 422, str(e))
     return await db.clients.find_one({"id": client_id}, {"_id": 0})
 
 
@@ -211,13 +212,13 @@ async def competitors_comparison(client_id: str):
 
 @api.post("/clients/{client_id}/metrics/refresh")
 async def client_refresh_metrics(client_id: str):
-    """Refresh DR/backlinks for the client's OWN domain (for comparison view)."""
-    if not dfs_lib.is_configured():
-        raise HTTPException(400, "DataForSEO not configured")
+    """Refresh authority/backlinks for the client's OWN domain (for comparison view)."""
+    if not (semrush.is_configured() or dfs_lib.is_configured()):
+        raise HTTPException(400, "Neither Semrush nor DataForSEO is configured")
     try:
         metrics = await competitors_enrich.refresh_client_metrics(db, client_id)
     except RuntimeError as e:
-        raise HTTPException(404, str(e))
+        raise HTTPException(404 if "not found" in str(e).lower() else 422, str(e))
     return {"ok": True, "metrics": metrics}
 
 

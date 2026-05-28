@@ -115,6 +115,56 @@ async def phrase_batch_metrics(phrases: list, database: str = "us") -> list:
     return _parse_semrush_csv(raw.get("raw", ""), max_rows=len(phrases) + 5)
 
 
+def _to_int(v):
+    if v is None or v == "":
+        return None
+    try:
+        return int(float(str(v).replace(",", "")))
+    except (TypeError, ValueError):
+        return None
+
+
+async def backlinks_overview(target: str, target_type: str = "root_domain") -> dict | None:
+    """High-level backlink metrics for a domain or URL via Semrush.
+    Returns {backlinks, referring_domains, referring_domains_dofollow, referring_domains_nofollow,
+    authority_score, trust_score, ips, urls, image_links}.
+    """
+    raw = await execute_report("backlinks_overview", {"target": target, "target_type": target_type})
+    rows = _parse_semrush_csv(raw.get("raw", ""), max_rows=1)
+    if not rows:
+        return None
+    r = rows[0]
+    return {
+        "backlinks": _to_int(r.get("total")),
+        "referring_domains": _to_int(r.get("domains_num")),
+        "referring_domains_dofollow": _to_int(r.get("follows_num")),
+        "referring_domains_nofollow": _to_int(r.get("nofollows_num")),
+        "authority_score": _to_int(r.get("score")),
+        "trust_score": _to_int(r.get("trust_score")),
+        "ips": _to_int(r.get("ips_num")),
+        "urls_with_backlinks": _to_int(r.get("urls_num")),
+        "image_backlinks": _to_int(r.get("images_num")),
+    }
+
+
+async def domain_rank(domain: str, database: str = "us") -> dict | None:
+    """Domain-level snapshot: organic keyword count + traffic + cost for one region."""
+    raw = await execute_report("domain_rank", {"domain": domain, "database": database})
+    rows = _parse_semrush_csv(raw.get("raw", ""), max_rows=1)
+    if not rows:
+        return None
+    r = rows[0]
+    return {
+        "rank": _to_int(r.get("Rank")),
+        "organic_keywords": _to_int(r.get("Organic Keywords")),
+        "organic_traffic": _to_int(r.get("Organic Traffic")),
+        "organic_cost": _to_int(r.get("Organic Cost")),
+        "adwords_keywords": _to_int(r.get("Adwords Keywords")),
+        "adwords_traffic": _to_int(r.get("Adwords Traffic")),
+        "database": database,
+    }
+
+
 async def test_connection() -> Dict[str, Any]:
     """Lightweight ping: try to list tools, return summary."""
     try:

@@ -3,26 +3,16 @@
 Storage shape (extends the existing `client.competitors[]` entries):
 {
   id, name, domain, notes,                  # existing
-  metrics: {                                # NEW — DataForSEO bulk pull
-    domain_rating, page_rating,
+  metrics: {                                # NEW — Semrush primary, DataForSEO fallback
+    authority_score, trust_score,           # Semrush backlinks_overview
     backlinks, referring_domains,
     referring_domains_nofollow, referring_domains_dofollow,
-    spam_score, refreshed_at,
+    organic_keywords, organic_traffic,      # Semrush domain_rank
+    # DataForSEO-only (if Backlinks API subscription present):
+    domain_rating, page_rating, spam_score,
+    refreshed_at, source: 'semrush' | 'dataforseo' | 'mixed',
   },
-  ranked_keywords: {                        # NEW — DataForSEO ranked_keywords
-    items: [{keyword, position, search_volume, url, etv, intent}, ...],
-    total, refreshed_at,
-  },
-  semrush_uploads: {                        # NEW — per-competitor Semrush CSV
-    organic_positions: {items, summary, ingested_at, filename},
-    backlinks: {...}, ...
-  },
-  sf_crawl: {                               # NEW — uploaded SF crawl CSV
-    page_index: [...],
-    issues: [...],
-    summary: {...},
-    ingested_at, filename,
-  },
+  ...
 }
 """
 from __future__ import annotations
@@ -31,6 +21,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import dataforseo
+import semrush
 
 
 def _now() -> str:
@@ -55,34 +46,112 @@ async def _update_competitor(db, client_id: str, competitor_id: str, fields: Dic
     return await _get_competitor(db, client_id, competitor_id)
 
 
+def _normalize_domain(domain: str) -> str:
+    return (
+        (domain or "").strip()
+        .replace("https://", "")
+        .replace("http://", "")
+        .lstrip("www.")
+        .rstrip("/")
+        .split("/")[0]
+    )
+
+
+async def _pull_metrics_for_domain(domain: str) -> Dict[str, Any]:
+    """Aggregate metrics from Semrush (primary) and DataForSEO (fallback)
+    into the canonical metrics shape. Tracks which source(s) succeeded."""
+    if not domain:
+        raise RuntimeError("No domain provided")
+    domain_only = _normalize_domain(domain)
+    if not domain_only:
+        raise RuntimeError("Invalid domain")
+
+    metrics: Dict[str, Any] = {"refreshed_at": _now()}
+    sources: list[str] = []
+    errors: list[str] = []
+
+    # 1) Semrush backlinks_overview — high-level backlink metrics
+    if semrush.is_configured():
+        try:
+            sm = await semrush.backlinks_overview(domain_only, target_type="root_domain")
+            if sm:
+                metrics.update({
+                    "backlinks": sm.get("backlinks"),
+                    "referring_domains": sm.get("referring_domains"),
+                    "referring_domains_dofollow": sm.get("referring_domains_dofollow"),
+                    "referring_domains_nofollow": sm.get("referring_domains_nofollow"),
+                    "authority_score": sm.get("authority_score"),
+                    "trust_score": sm.get("trust_score"),
+                    "urls_with_backlinks": sm.get("urls_with_backlinks"),
+                })
+                sources.append("semrush_backlinks")
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"semrush_backlinks: {str(e)[:120]}")
+
+        # 2) Semrush domain_rank — organic keywords + traffic
+        try:
+            dr = await semrush.domain_rank(domain_only, database="us")
+            if dr:
+                metrics.update({
+                    "organic_keywords": dr.get("organic_keywords"),
+                    "organic_traffic": dr.get("organic_traffic"),
+                    "organic_cost": dr.get("organic_cost"),
+                    "semrush_rank": dr.get("rank"),
+                })
+                sources.append("semrush_overview")
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"semrush_overview: {str(e)[:120]}")
+
+    # 3) DataForSEO bulk backlinks — DR/PR/spam (only present on paid Backlinks API sub)
+    if dataforseo.is_configured():
+        try:
+            url = domain if domain.startswith(("http://", "https://")) else f"https://{domain_only}"
+            bl_map = await dataforseo.backlinks_bulk([url], [domain_only])
+            profile = bl_map.get(url) or {}
+            # Only overwrite when DFS returned real numbers (it returns nulls on failure)
+            if profile.get("domain_rating") is not None or profile.get("backlinks") is not None:
+                if profile.get("domain_rating") is not None:
+                    metrics["domain_rating"] = profile.get("domain_rating")
+                if profile.get("page_rating") is not None:
+                    metrics["page_rating"] = profile.get("page_rating")
+                if profile.get("spam_score") is not None:
+                    metrics["spam_score"] = profile.get("spam_score")
+                # If Semrush didn't fill these, DFS can
+                metrics.setdefault("backlinks", profile.get("backlinks"))
+                metrics.setdefault("referring_domains", profile.get("referring_domains"))
+                metrics.setdefault("referring_domains_dofollow", profile.get("referring_domains_dofollow"))
+                metrics.setdefault("referring_domains_nofollow", profile.get("referring_domains_nofollow"))
+                sources.append("dataforseo_backlinks")
+        except dataforseo.AccessDeniedError:
+            errors.append("dataforseo_backlinks_access_denied")
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"dataforseo_backlinks: {str(e)[:120]}")
+
+    metrics["source"] = "+".join(sources) if sources else "none"
+    if errors:
+        metrics["errors"] = errors
+    if not sources:
+        raise RuntimeError(
+            "No metrics provider returned data. "
+            + ("; ".join(errors) if errors else "Configure Semrush or DataForSEO Backlinks API.")
+        )
+    return metrics
+
+
 # ---------- DataForSEO refreshes ----------
 
 async def refresh_metrics(db, client_id: str, competitor_id: str) -> Dict[str, Any]:
-    """Pull DR/backlinks/spam for the competitor's domain + homepage URL.
-    One call (~$0.003)."""
+    """Pull backlinks + authority + traffic metrics from Semrush (primary) and
+    DataForSEO (fallback, if subscribed). One call to each (~$0.04 Semrush + ~$0.003 DFS)."""
     c = await _get_competitor(db, client_id, competitor_id)
     if not c:
         raise RuntimeError("Competitor not found")
     domain = (c.get("domain") or "").strip().rstrip("/")
     if not domain:
         raise RuntimeError("Competitor has no domain")
-    # Normalize to URL + domain
-    url = domain if domain.startswith(("http://", "https://")) else f"https://{domain}"
-    domain_only = domain.replace("https://", "").replace("http://", "").lstrip("www.").split("/")[0]
-
-    bl_map = await dataforseo.backlinks_bulk([url], [domain_only])
-    profile = bl_map.get(url) or {}
-    metrics = {
-        "domain_rating": profile.get("domain_rating"),
-        "page_rating": profile.get("page_rating"),
-        "backlinks": profile.get("backlinks"),
-        "spam_score": profile.get("spam_score"),
-        "referring_domains": profile.get("referring_domains"),
-        "referring_domains_nofollow": profile.get("referring_domains_nofollow"),
-        "referring_domains_dofollow": profile.get("referring_domains_dofollow"),
-        "refreshed_at": _now(),
-    }
+    metrics = await _pull_metrics_for_domain(domain)
     return await _update_competitor(db, client_id, competitor_id, {"metrics": metrics})
+
 
 
 async def refresh_ranked_keywords(db, client_id: str, competitor_id: str, limit: int = 200) -> Dict[str, Any]:
@@ -205,27 +274,59 @@ async def build_comparison(db, client_id: str) -> Dict[str, Any]:
     client_metrics_data = client_metrics.get("metrics") or {}
     for c in rows[1:]:
         m = c.get("metrics") or {}
-        if not m or m.get("domain_rating") is None:
+        if not m:
             continue
+
+        # Authority Score (Semrush, 0-100)
+        client_as = client_metrics_data.get("authority_score")
+        comp_as = m.get("authority_score")
+        if client_as is not None and comp_as is not None and comp_as > client_as + 5:
+            deltas.append({
+                "competitor": c.get("name"),
+                "type": "authority_score",
+                "label": "Authority Score",
+                "gap": comp_as - client_as,
+                "your_value": client_as,
+                "their_value": comp_as,
+            })
+
+        # Domain Rating (DataForSEO, 0-1000 → render /10)
         client_dr = client_metrics_data.get("domain_rating") or 0
         comp_dr = m.get("domain_rating") or 0
-        if comp_dr > client_dr + 50:  # 5+ DR points on 0-100 scale (DR is 0-1000)
+        if comp_dr and comp_dr > client_dr + 50:
             deltas.append({
                 "competitor": c.get("name"),
                 "type": "domain_rating",
+                "label": "Domain Rating",
                 "gap": round((comp_dr - client_dr) / 10, 1),
                 "your_value": round(client_dr / 10, 1),
                 "their_value": round(comp_dr / 10, 1),
             })
+
+        # Referring domains (dofollow)
         client_rd = (client_metrics_data.get("referring_domains_dofollow") or 0)
         comp_rd = (m.get("referring_domains_dofollow") or 0)
         if comp_rd > client_rd * 1.5 and comp_rd - client_rd > 20:
             deltas.append({
                 "competitor": c.get("name"),
                 "type": "dofollow_domains",
+                "label": "Dofollow referring domains",
                 "gap": comp_rd - client_rd,
                 "your_value": client_rd,
                 "their_value": comp_rd,
+            })
+
+        # Organic traffic (Semrush)
+        client_ot = client_metrics_data.get("organic_traffic") or 0
+        comp_ot = m.get("organic_traffic") or 0
+        if comp_ot > client_ot * 3 and comp_ot - client_ot > 1000:
+            deltas.append({
+                "competitor": c.get("name"),
+                "type": "organic_traffic",
+                "label": "Estimated organic traffic",
+                "gap": comp_ot - client_ot,
+                "your_value": client_ot,
+                "their_value": comp_ot,
             })
 
     return {
@@ -236,29 +337,15 @@ async def build_comparison(db, client_id: str) -> Dict[str, Any]:
 
 
 async def refresh_client_metrics(db, client_id: str) -> Dict[str, Any]:
-    """Pull DR/backlinks/spam for the CLIENT's own domain so the comparison view
-    has both sides. Stores under `client.metrics`."""
+    """Pull metrics for the CLIENT's own domain so the comparison view has both sides.
+    Stores under `client.metrics`."""
     client = await db.clients.find_one({"id": client_id}, {"_id": 0, "domain": 1})
     if not client:
         raise RuntimeError("Client not found")
     domain = (client.get("domain") or "").strip()
     if not domain:
         raise RuntimeError("Client has no domain")
-    url = domain if domain.startswith(("http://", "https://")) else f"https://{domain}"
-    domain_only = domain.replace("https://", "").replace("http://", "").lstrip("www.").split("/")[0]
-
-    bl_map = await dataforseo.backlinks_bulk([url], [domain_only])
-    profile = bl_map.get(url) or {}
-    metrics = {
-        "domain_rating": profile.get("domain_rating"),
-        "page_rating": profile.get("page_rating"),
-        "backlinks": profile.get("backlinks"),
-        "spam_score": profile.get("spam_score"),
-        "referring_domains": profile.get("referring_domains"),
-        "referring_domains_nofollow": profile.get("referring_domains_nofollow"),
-        "referring_domains_dofollow": profile.get("referring_domains_dofollow"),
-        "refreshed_at": _now(),
-    }
+    metrics = await _pull_metrics_for_domain(domain)
     await db.clients.update_one(
         {"id": client_id},
         {"$set": {"metrics": metrics}},

@@ -136,7 +136,7 @@ export default function Competitors() {
         </div>
       </Section>
 
-      <Section title="Competitor comparison" description="Side-by-side metrics. Refresh client + competitor metrics from DataForSEO to populate." testId="comparison-section">
+      <Section title="Competitor comparison" description="Side-by-side metrics. Pulls authority + backlinks + organic traffic from Semrush (your Semrush MCP key)." testId="comparison-section">
         <ComparisonOverview comparison={comparison} onRefreshClient={refreshClientMetrics} refreshingClient={refreshingClient} />
       </Section>
 
@@ -179,11 +179,12 @@ function ComparisonOverview({ comparison, onRefreshClient, refreshingClient }) {
             <thead className="bg-zinc-950 border-b border-zinc-800">
               <tr>
                 <Th>Site</Th>
-                <Th className="text-right">DR</Th>
+                <Th className="text-right">Authority</Th>
                 <Th className="text-right">Backlinks</Th>
                 <Th className="text-right">Ref. domains</Th>
                 <Th className="text-right">Dofollow</Th>
-                <Th className="text-right">Spam</Th>
+                <Th className="text-right">Org. KWs</Th>
+                <Th className="text-right">Org. Traffic</Th>
                 <Th className="text-right">Ranked KWs</Th>
                 <Th className="text-right">SF pages</Th>
                 <Th></Th>
@@ -204,15 +205,12 @@ function ComparisonOverview({ comparison, onRefreshClient, refreshingClient }) {
                       </div>
                       <div className="text-[10px] text-zinc-500 font-mono">{r.domain}</div>
                     </td>
-                    <td className="px-3 py-2.5 text-right font-mono text-zinc-200">{scaled(m.domain_rating)}</td>
+                    <td className="px-3 py-2.5 text-right font-mono text-zinc-200">{m.authority_score ?? "—"}</td>
                     <td className="px-3 py-2.5 text-right font-mono text-zinc-200">{fmt(m.backlinks)}</td>
                     <td className="px-3 py-2.5 text-right font-mono text-zinc-200">{fmt(m.referring_domains)}</td>
                     <td className="px-3 py-2.5 text-right font-mono text-zinc-200">{fmt(m.referring_domains_dofollow)}</td>
-                    <td className="px-3 py-2.5 text-right font-mono">
-                      {m.spam_score == null ? <span className="text-zinc-600">—</span> : (
-                        <span className={m.spam_score >= 50 ? "text-rose-400" : m.spam_score >= 30 ? "text-amber-400" : "text-zinc-300"}>{m.spam_score}</span>
-                      )}
-                    </td>
+                    <td className="px-3 py-2.5 text-right font-mono text-zinc-200">{fmt(m.organic_keywords)}</td>
+                    <td className="px-3 py-2.5 text-right font-mono text-zinc-200">{fmt(m.organic_traffic)}</td>
                     <td className="px-3 py-2.5 text-right font-mono text-zinc-200">{fmt(r.ranked_keywords_total)}</td>
                     <td className="px-3 py-2.5 text-right font-mono text-zinc-200">{fmt(r.sf_pages)}</td>
                     <td className="px-3 py-2.5 text-right">
@@ -222,7 +220,7 @@ function ComparisonOverview({ comparison, onRefreshClient, refreshingClient }) {
                           disabled={refreshingClient}
                           className="text-zinc-400 hover:text-zinc-100 disabled:opacity-50"
                           data-testid="refresh-client-metrics"
-                          title="Refresh client metrics from DataForSEO"
+                          title="Refresh client metrics from Semrush"
                         >
                           {refreshingClient ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
                         </button>
@@ -242,12 +240,14 @@ function ComparisonOverview({ comparison, onRefreshClient, refreshingClient }) {
           {comparison.deltas.map((d, i) => (
             <div key={i} className="text-[11px] text-zinc-300">
               <span className="text-zinc-100 font-medium">{d.competitor}</span>
-              {d.type === "domain_rating" && (
-                <> has a <span className="text-amber-300 font-mono">{d.gap}-point</span> Domain Rating lead ({d.their_value} vs your {d.your_value})</>
-              )}
-              {d.type === "dofollow_domains" && (
-                <> has <span className="text-amber-300 font-mono">{d.gap.toLocaleString()}</span> more dofollow referring domains ({d.their_value.toLocaleString()} vs your {d.your_value.toLocaleString()})</>
-              )}
+              {" leads on "}<span className="text-amber-300">{d.label || d.type}</span>
+              {": "}
+              <span className="font-mono text-amber-300">{Number(d.their_value).toLocaleString()}</span>
+              {" vs your "}
+              <span className="font-mono">{Number(d.your_value).toLocaleString()}</span>
+              {" (gap "}
+              <span className="font-mono text-amber-300">{Number(d.gap).toLocaleString()}</span>
+              {")"}
             </div>
           ))}
         </div>
