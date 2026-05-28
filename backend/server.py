@@ -493,6 +493,26 @@ async def bulk_decide_approvals(payload: BulkDecision):
     return {"ok": True, "updated": result.modified_count}
 
 
+@api.delete("/approvals/{approval_id}")
+async def delete_approval(approval_id: str):
+    result = await db.approvals.delete_one({"id": approval_id})
+    if result.deleted_count == 0:
+        raise HTTPException(404, "Approval not found")
+    return {"ok": True, "deleted": 1}
+
+
+class BulkDelete(BaseModel):
+    ids: List[str]
+
+
+@api.post("/approvals/bulk-delete")
+async def bulk_delete_approvals(payload: BulkDelete):
+    if not payload.ids:
+        raise HTTPException(400, "No approval ids provided")
+    result = await db.approvals.delete_many({"id": {"$in": payload.ids}})
+    return {"ok": True, "deleted": result.deleted_count}
+
+
 @api.post("/approvals/{approval_id}/progress", response_model=Approval)
 async def update_progress(approval_id: str, payload: ProgressUpdate):
     """Move an approved item along its lifecycle: open → in_progress → done → archived.

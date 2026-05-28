@@ -55,6 +55,10 @@ export const api = {
     client.post(`/approvals/${id}/decision`, decision).then((r) => r.data),
   bulkDecideApprovals: (ids, status, note = "") =>
     client.post(`/approvals/bulk-decision`, { ids, status, note }).then((r) => r.data),
+  deleteApproval: (id) =>
+    client.delete(`/approvals/${id}`).then((r) => r.data),
+  bulkDeleteApprovals: (ids) =>
+    client.post(`/approvals/bulk-delete`, { ids }).then((r) => r.data),
   updateProgress: (id, progress, note = "") =>
     client.post(`/approvals/${id}/progress`, { progress, note }).then((r) => r.data),
   editApprovalContent: (id, content) =>

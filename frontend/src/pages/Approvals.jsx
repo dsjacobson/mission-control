@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
-import { Check, X, FileText, ArrowRight, Loader2 } from "lucide-react";
+import { Check, X, FileText, ArrowRight, Loader2, Trash2 } from "lucide-react";
 import api from "../lib/api";
 import { PageHeader, Section, EmptyState, StatusBadge, formatRelative } from "../components/Bits";
 import { useClients } from "../lib/ClientContext";
@@ -96,6 +96,37 @@ export default function Approvals() {
     }
   };
 
+  const bulkDelete = async () => {
+    if (selectedIds.size === 0) return;
+    if (!window.confirm(`Permanently delete ${selectedIds.size} approval${selectedIds.size === 1 ? "" : "s"}? This cannot be undone.`)) return;
+    setBulkBusy(true);
+    try {
+      const ids = Array.from(selectedIds);
+      const r = await api.bulkDeleteApprovals(ids);
+      toast.success(`Deleted ${r.deleted} item${r.deleted === 1 ? "" : "s"}`);
+      setSelectedIds(new Set());
+      await fetchItems();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Bulk delete failed");
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const deleteOne = async () => {
+    if (!selected) return;
+    if (!window.confirm(`Permanently delete "${selected.title}"? This cannot be undone.`)) return;
+    try {
+      await api.deleteApproval(selected.id);
+      toast.success("Deleted");
+      setSelected(null);
+      setNote("");
+      fetchItems();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed to delete");
+    }
+  };
+
   useEffect(() => {
     fetchItems();
     const id = setInterval(fetchItems, 4000);
@@ -168,42 +199,55 @@ export default function Approvals() {
         ) : (
           <div className="space-y-2">
             {/* Bulk action bar */}
-            {status === "pending" && (
-              <div className="rounded-sm border border-zinc-800 bg-zinc-900 px-3 py-2 flex items-center gap-3" data-testid="bulk-action-bar">
-                <Checkbox
-                  checked={allSelected ? true : someSelected ? "indeterminate" : false}
-                  onCheckedChange={toggleAll}
-                  className="border-zinc-700 data-[state=checked]:bg-emerald-400 data-[state=checked]:text-zinc-950"
-                  data-testid="select-all-checkbox"
-                />
-                <span className="text-xs text-zinc-400">
-                  {selectedIds.size === 0
-                    ? `Select all (${items.length})`
-                    : `${selectedIds.size} of ${items.length} selected`}
-                </span>
-                <div className="ml-auto flex items-center gap-2">
-                  <Button
-                    onClick={() => bulkDecide("rejected")}
-                    disabled={selectedIds.size === 0 || bulkBusy}
-                    variant="ghost"
-                    className="text-rose-400 hover:bg-rose-400/10 hover:text-rose-300 rounded-sm h-8 text-xs"
-                    data-testid="bulk-reject-btn"
-                  >
-                    {bulkBusy ? <Loader2 size={12} className="mr-1.5 animate-spin" /> : <X size={12} className="mr-1.5" />}
-                    Reject selected
-                  </Button>
-                  <Button
-                    onClick={() => bulkDecide("approved")}
-                    disabled={selectedIds.size === 0 || bulkBusy}
-                    className="bg-emerald-400/90 hover:bg-emerald-300 text-zinc-950 rounded-sm h-8 text-xs"
-                    data-testid="bulk-approve-btn"
-                  >
-                    {bulkBusy ? <Loader2 size={12} className="mr-1.5 animate-spin" /> : <Check size={12} className="mr-1.5" />}
-                    Approve selected
-                  </Button>
-                </div>
+            <div className="rounded-sm border border-zinc-800 bg-zinc-900 px-3 py-2 flex items-center gap-3 flex-wrap" data-testid="bulk-action-bar">
+              <Checkbox
+                checked={allSelected ? true : someSelected ? "indeterminate" : false}
+                onCheckedChange={toggleAll}
+                className="border-zinc-700 data-[state=checked]:bg-emerald-400 data-[state=checked]:text-zinc-950"
+                data-testid="select-all-checkbox"
+              />
+              <span className="text-xs text-zinc-400">
+                {selectedIds.size === 0
+                  ? `Select all (${items.length})`
+                  : `${selectedIds.size} of ${items.length} selected`}
+              </span>
+              <div className="ml-auto flex items-center gap-2 flex-wrap">
+                <Button
+                  onClick={bulkDelete}
+                  disabled={selectedIds.size === 0 || bulkBusy}
+                  variant="ghost"
+                  className="text-zinc-400 hover:bg-zinc-800 hover:text-rose-300 rounded-sm h-8 text-xs"
+                  data-testid="bulk-delete-btn"
+                  title="Permanently delete (cannot be undone)"
+                >
+                  {bulkBusy ? <Loader2 size={12} className="mr-1.5 animate-spin" /> : <Trash2 size={12} className="mr-1.5" />}
+                  Delete selected
+                </Button>
+                {status === "pending" && (
+                  <>
+                    <Button
+                      onClick={() => bulkDecide("rejected")}
+                      disabled={selectedIds.size === 0 || bulkBusy}
+                      variant="ghost"
+                      className="text-rose-400 hover:bg-rose-400/10 hover:text-rose-300 rounded-sm h-8 text-xs"
+                      data-testid="bulk-reject-btn"
+                    >
+                      {bulkBusy ? <Loader2 size={12} className="mr-1.5 animate-spin" /> : <X size={12} className="mr-1.5" />}
+                      Reject selected
+                    </Button>
+                    <Button
+                      onClick={() => bulkDecide("approved")}
+                      disabled={selectedIds.size === 0 || bulkBusy}
+                      className="bg-emerald-400/90 hover:bg-emerald-300 text-zinc-950 rounded-sm h-8 text-xs"
+                      data-testid="bulk-approve-btn"
+                    >
+                      {bulkBusy ? <Loader2 size={12} className="mr-1.5 animate-spin" /> : <Check size={12} className="mr-1.5" />}
+                      Approve selected
+                    </Button>
+                  </>
+                )}
               </div>
-            )}
+            </div>
 
             {items.map((a) => (
               <div
@@ -213,17 +257,13 @@ export default function Approvals() {
                   selectedIds.has(a.id) ? "border-emerald-400/40" : "border-zinc-800"
                 }`}
               >
-                {status === "pending" ? (
-                  <Checkbox
-                    checked={selectedIds.has(a.id)}
-                    onCheckedChange={() => toggle(a.id)}
-                    onClick={(e) => e.stopPropagation()}
-                    className="border-zinc-700 data-[state=checked]:bg-emerald-400 data-[state=checked]:text-zinc-950 shrink-0"
-                    data-testid={`approval-checkbox-${a.id}`}
-                  />
-                ) : (
-                  <div className="w-4 shrink-0" />
-                )}
+                <Checkbox
+                  checked={selectedIds.has(a.id)}
+                  onCheckedChange={() => toggle(a.id)}
+                  onClick={(e) => e.stopPropagation()}
+                  className="border-zinc-700 data-[state=checked]:bg-emerald-400 data-[state=checked]:text-zinc-950 shrink-0"
+                  data-testid={`approval-checkbox-${a.id}`}
+                />
                 <button
                   onClick={() => { setSelected(a); setNote(a.decision_note || ""); }}
                   className="flex-1 text-left flex items-center gap-3 min-w-0"
@@ -275,6 +315,15 @@ export default function Approvals() {
                     >
                       Open full-page view
                     </Link>
+                    <Button
+                      onClick={deleteOne}
+                      variant="ghost"
+                      className="text-zinc-400 hover:bg-zinc-800 hover:text-rose-300 rounded-sm"
+                      data-testid="delete-approval"
+                      title="Permanently delete"
+                    >
+                      <Trash2 size={14} className="mr-1.5" /> Delete
+                    </Button>
                     {selected.status === "pending" ? (
                       <>
                         <Button onClick={() => decide("rejected")} variant="ghost" className="text-rose-400 hover:bg-rose-400/10 hover:text-rose-300 rounded-sm" data-testid="reject-approval">
@@ -319,6 +368,15 @@ export default function Approvals() {
                 />
               </div>
               <DialogFooter>
+                <Button
+                  onClick={deleteOne}
+                  variant="ghost"
+                  className="text-zinc-400 hover:bg-zinc-800 hover:text-rose-300 rounded-sm mr-auto"
+                  data-testid="delete-approval-default"
+                  title="Permanently delete"
+                >
+                  <Trash2 size={14} className="mr-1.5" /> Delete
+                </Button>
                 {selected.status === "pending" ? (
                   <>
                     <Button
