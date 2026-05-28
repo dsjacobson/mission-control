@@ -19,6 +19,8 @@ def new_id() -> str:
 # ---------- Client / Workspace ----------
 
 class Competitor(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     id: str = Field(default_factory=new_id)
     name: str
     domain: str
