@@ -146,13 +146,13 @@ async def ranked_keywords(
     target: str,
     location_code: int = DEFAULT_LOCATION_CODE,
     language_code: str = DEFAULT_LANGUAGE_CODE,
-    limit: int = 50,
+    limit: int = 200,
 ) -> List[Dict[str, Any]]:
     payload = [{
         "target": target,
         "location_code": location_code,
         "language_code": language_code,
-        "limit": limit,
+        "limit": min(limit, 1000),
         "load_rank_absolute": True,
     }]
     body = await _post("/dataforseo_labs/google/ranked_keywords/live", payload)
@@ -167,9 +167,13 @@ async def ranked_keywords(
         serp = ranked.get("serp_item") or {}
         out.append({
             "keyword": kw_data.get("keyword"),
-            "rank": serp.get("rank_group"),
+            "position": serp.get("rank_absolute") or serp.get("rank_group"),
             "search_volume": kw_info.get("search_volume"),
+            "cpc": kw_info.get("cpc"),
             "url": serp.get("url"),
+            "title": serp.get("title"),
+            "etv": ranked.get("etv"),
+            "intent": ((kw_data.get("search_intent_info") or {}).get("main_intent")),
         })
     return out
 

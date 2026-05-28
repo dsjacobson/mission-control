@@ -101,6 +101,30 @@ export const api = {
     client.get(`/clients/${clientId}/keyword-map/refine/url`, { params: { url } }).then((r) => r.data),
   listRefinements: (clientId) =>
     client.get(`/clients/${clientId}/keyword-map/refinements`).then((r) => r.data),
+
+  // Competitor enrichment
+  refreshCompetitorMetrics: (clientId, competitorId) =>
+    client.post(`/clients/${clientId}/competitors/${competitorId}/metrics/refresh`).then((r) => r.data),
+  refreshCompetitorKeywords: (clientId, competitorId, limit = 200) =>
+    client.post(`/clients/${clientId}/competitors/${competitorId}/keywords/refresh`, null, { params: { limit } }).then((r) => r.data),
+  uploadCompetitorSemrush: (clientId, competitorId, file) => {
+    const form = new FormData();
+    form.append("file", file);
+    return client.post(`/clients/${clientId}/competitors/${competitorId}/semrush/upload`, form, {
+      headers: { "Content-Type": "multipart/form-data" },
+    }).then((r) => r.data);
+  },
+  uploadCompetitorSf: (clientId, competitorId, file) => {
+    const form = new FormData();
+    form.append("file", file);
+    return client.post(`/clients/${clientId}/competitors/${competitorId}/sf-crawl/upload`, form, {
+      headers: { "Content-Type": "multipart/form-data" },
+    }).then((r) => r.data);
+  },
+  competitorsComparison: (clientId) =>
+    client.get(`/clients/${clientId}/competitors/comparison`).then((r) => r.data),
+  refreshClientMetrics: (clientId) =>
+    client.post(`/clients/${clientId}/metrics/refresh`).then((r) => r.data),
 };
 
 export default api;

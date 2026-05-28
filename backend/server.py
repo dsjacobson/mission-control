@@ -38,6 +38,7 @@ import executor
 import keyword_map as kw_map_lib
 import page_analyzer
 import dataforseo as dfs_lib
+import competitors_enrich
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -139,6 +140,87 @@ async def remove_competitor(client_id: str, competitor_id: str):
     if result.matched_count == 0:
         raise HTTPException(404, "Client not found")
     return await db.clients.find_one({"id": client_id}, {"_id": 0})
+
+
+# ============ Competitor enrichment ============
+
+@api.post("/clients/{client_id}/competitors/{competitor_id}/metrics/refresh")
+async def competitor_refresh_metrics(client_id: str, competitor_id: str):
+    if not dfs_lib.is_configured():
+        raise HTTPException(400, "DataForSEO not configured")
+    try:
+        await competitors_enrich.refresh_metrics(db, client_id, competitor_id)
+    except RuntimeError as e:
+        raise HTTPException(404, str(e))
+    return await db.clients.find_one({"id": client_id}, {"_id": 0})
+
+
+@api.post("/clients/{client_id}/competitors/{competitor_id}/keywords/refresh")
+async def competitor_refresh_keywords(client_id: str, competitor_id: str, limit: int = 200):
+    if not dfs_lib.is_configured():
+        raise HTTPException(400, "DataForSEO not configured")
+    try:
+        await competitors_enrich.refresh_ranked_keywords(db, client_id, competitor_id, limit=min(limit, 1000))
+    except RuntimeError as e:
+        raise HTTPException(404, str(e))
+    return await db.clients.find_one({"id": client_id}, {"_id": 0})
+
+
+@api.post("/clients/{client_id}/competitors/{competitor_id}/semrush/upload")
+async def competitor_semrush_upload(client_id: str, competitor_id: str, file: UploadFile = File(...)):
+    c = await db.clients.find_one(
+        {"id": client_id, "competitors.id": competitor_id},
+        {"_id": 0, "competitors.$": 1},
+    )
+    if not c:
+        raise HTTPException(404, "Competitor not found")
+    if not file.filename.lower().endswith(".csv"):
+        raise HTTPException(400, "Only .csv files supported")
+    raw = await file.read()
+    text = raw.decode("utf-8-sig", errors="replace")
+    parsed = semrush_csv.parse_csv(text)
+    if parsed["type"] in ("empty", "unknown"):
+        raise HTTPException(400, parsed.get("note") or "Could not recognise this Semrush export")
+    await competitors_enrich.save_semrush_upload(db, client_id, competitor_id, parsed, filename=file.filename)
+    return {"ok": True, "type": parsed["type"], "rows": parsed["rows"], "summary": parsed["summary"]}
+
+
+@api.post("/clients/{client_id}/competitors/{competitor_id}/sf-crawl/upload")
+async def competitor_sf_upload(client_id: str, competitor_id: str, file: UploadFile = File(...)):
+    c = await db.clients.find_one(
+        {"id": client_id, "competitors.id": competitor_id},
+        {"_id": 0, "competitors.$": 1},
+    )
+    if not c:
+        raise HTTPException(404, "Competitor not found")
+    if not file.filename.lower().endswith(".csv"):
+        raise HTTPException(400, "Only .csv files supported")
+    raw = await file.read()
+    text = raw.decode("utf-8-sig", errors="replace")
+    parsed = screamingfrog.parse_csv(text)
+    if parsed.get("format") in ("empty", "unknown"):
+        raise HTTPException(400, "Could not recognise this Screaming Frog export — try issues_overview or internal_all.csv")
+    await competitors_enrich.save_sf_crawl(db, client_id, competitor_id, parsed, filename=file.filename)
+    return {"ok": True, "format": parsed.get("format"), "rows": parsed.get("rows"), "summary": parsed.get("summary")}
+
+
+@api.get("/clients/{client_id}/competitors/comparison")
+async def competitors_comparison(client_id: str):
+    return await competitors_enrich.build_comparison(db, client_id)
+
+
+@api.post("/clients/{client_id}/metrics/refresh")
+async def client_refresh_metrics(client_id: str):
+    """Refresh DR/backlinks for the client's OWN domain (for comparison view)."""
+    if not dfs_lib.is_configured():
+        raise HTTPException(400, "DataForSEO not configured")
+    try:
+        metrics = await competitors_enrich.refresh_client_metrics(db, client_id)
+    except RuntimeError as e:
+        raise HTTPException(404, str(e))
+    return {"ok": True, "metrics": metrics}
+
+
 
 
 # ============ Integrations ============
