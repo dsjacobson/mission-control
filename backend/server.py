@@ -467,6 +467,32 @@ async def decide_approval(approval_id: str, decision: ApprovalDecision):
     return await db.approvals.find_one({"id": approval_id}, {"_id": 0})
 
 
+class BulkDecision(BaseModel):
+    ids: List[str]
+    status: str  # "approved" | "rejected"
+    note: Optional[str] = ""
+
+
+@api.post("/approvals/bulk-decision")
+async def bulk_decide_approvals(payload: BulkDecision):
+    if payload.status not in ("approved", "rejected"):
+        raise HTTPException(400, "Status must be approved or rejected")
+    if not payload.ids:
+        raise HTTPException(400, "No approval ids provided")
+    update = {
+        "status": payload.status,
+        "decided_at": now_iso(),
+        "decision_note": payload.note or "",
+    }
+    if payload.status == "approved":
+        update["progress"] = "open"
+    result = await db.approvals.update_many(
+        {"id": {"$in": payload.ids}, "status": "pending"},
+        {"$set": update},
+    )
+    return {"ok": True, "updated": result.modified_count}
+
+
 @api.post("/approvals/{approval_id}/progress", response_model=Approval)
 async def update_progress(approval_id: str, payload: ProgressUpdate):
     """Move an approved item along its lifecycle: open → in_progress → done → archived.

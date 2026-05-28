@@ -53,6 +53,8 @@ export const api = {
     client.get("/approvals", { params }).then((r) => r.data),
   decideApproval: (id, decision) =>
     client.post(`/approvals/${id}/decision`, decision).then((r) => r.data),
+  bulkDecideApprovals: (ids, status, note = "") =>
+    client.post(`/approvals/bulk-decision`, { ids, status, note }).then((r) => r.data),
   updateProgress: (id, progress, note = "") =>
     client.post(`/approvals/${id}/progress`, { progress, note }).then((r) => r.data),
   editApprovalContent: (id, content) =>

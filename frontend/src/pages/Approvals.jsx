@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
-import { Check, X, FileText, ArrowRight } from "lucide-react";
+import { Check, X, FileText, ArrowRight, Loader2 } from "lucide-react";
 import api from "../lib/api";
 import { PageHeader, Section, EmptyState, StatusBadge, formatRelative } from "../components/Bits";
 import { useClients } from "../lib/ClientContext";
 import { Button } from "../components/ui/button";
 import { Textarea } from "../components/ui/textarea";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/tabs";
+import { Checkbox } from "../components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -36,6 +37,8 @@ export default function Approvals() {
   const [selected, setSelected] = useState(null);
   const [note, setNote] = useState("");
   const [justApproved, setJustApproved] = useState(null);
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   useEffect(() => {
     if (clientId) setActiveClientId(clientId);
@@ -47,7 +50,50 @@ export default function Approvals() {
       if (clientId) params.client_id = clientId;
       const data = await api.listApprovals(params);
       setItems(data);
+      // Drop any selected ids that are no longer in the current list
+      setSelectedIds((prev) => {
+        const ids = new Set(data.map((d) => d.id));
+        const next = new Set();
+        prev.forEach((id) => ids.has(id) && next.add(id));
+        return next;
+      });
     } catch {}
+  };
+
+  // Clear selection when switching tabs or clients
+  useEffect(() => { setSelectedIds(new Set()); }, [status, clientId]);
+
+  const allSelected = items.length > 0 && selectedIds.size === items.length;
+  const someSelected = selectedIds.size > 0 && !allSelected;
+
+  const toggle = (id) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleAll = () => {
+    if (allSelected) setSelectedIds(new Set());
+    else setSelectedIds(new Set(items.map((i) => i.id)));
+  };
+
+  const bulkDecide = async (decision) => {
+    if (selectedIds.size === 0) return;
+    setBulkBusy(true);
+    try {
+      const ids = Array.from(selectedIds);
+      const r = await api.bulkDecideApprovals(ids, decision);
+      toast.success(`${decision === "approved" ? "Approved" : "Rejected"} ${r.updated} item${r.updated === 1 ? "" : "s"}`);
+      setSelectedIds(new Set());
+      await fetchItems();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Bulk action failed");
+    } finally {
+      setBulkBusy(false);
+    }
   };
 
   useEffect(() => {
@@ -121,28 +167,84 @@ export default function Approvals() {
           />
         ) : (
           <div className="space-y-2">
+            {/* Bulk action bar */}
+            {status === "pending" && (
+              <div className="rounded-sm border border-zinc-800 bg-zinc-900 px-3 py-2 flex items-center gap-3" data-testid="bulk-action-bar">
+                <Checkbox
+                  checked={allSelected ? true : someSelected ? "indeterminate" : false}
+                  onCheckedChange={toggleAll}
+                  className="border-zinc-700 data-[state=checked]:bg-emerald-400 data-[state=checked]:text-zinc-950"
+                  data-testid="select-all-checkbox"
+                />
+                <span className="text-xs text-zinc-400">
+                  {selectedIds.size === 0
+                    ? `Select all (${items.length})`
+                    : `${selectedIds.size} of ${items.length} selected`}
+                </span>
+                <div className="ml-auto flex items-center gap-2">
+                  <Button
+                    onClick={() => bulkDecide("rejected")}
+                    disabled={selectedIds.size === 0 || bulkBusy}
+                    variant="ghost"
+                    className="text-rose-400 hover:bg-rose-400/10 hover:text-rose-300 rounded-sm h-8 text-xs"
+                    data-testid="bulk-reject-btn"
+                  >
+                    {bulkBusy ? <Loader2 size={12} className="mr-1.5 animate-spin" /> : <X size={12} className="mr-1.5" />}
+                    Reject selected
+                  </Button>
+                  <Button
+                    onClick={() => bulkDecide("approved")}
+                    disabled={selectedIds.size === 0 || bulkBusy}
+                    className="bg-emerald-400/90 hover:bg-emerald-300 text-zinc-950 rounded-sm h-8 text-xs"
+                    data-testid="bulk-approve-btn"
+                  >
+                    {bulkBusy ? <Loader2 size={12} className="mr-1.5 animate-spin" /> : <Check size={12} className="mr-1.5" />}
+                    Approve selected
+                  </Button>
+                </div>
+              </div>
+            )}
+
             {items.map((a) => (
-              <button
+              <div
                 key={a.id}
                 data-testid={`approval-${a.id}`}
-                onClick={() => { setSelected(a); setNote(a.decision_note || ""); }}
-                className="w-full text-left rounded-sm border border-zinc-800 bg-zinc-900 hover:bg-zinc-800/60 px-4 py-3 transition-colors duration-150 flex items-center gap-4"
+                className={`w-full rounded-sm border bg-zinc-900 hover:bg-zinc-800/60 transition-colors duration-150 flex items-center gap-3 pl-3 pr-4 py-3 ${
+                  selectedIds.has(a.id) ? "border-emerald-400/40" : "border-zinc-800"
+                }`}
               >
-                <FileText size={16} className="text-zinc-500 shrink-0" />
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-mono uppercase tracking-wider text-zinc-500">{KIND_LABEL[a.kind] || a.kind}</span>
-                    <span className="text-zinc-700">·</span>
-                    <span className="text-[10px] font-mono uppercase tracking-wider text-zinc-500">{a.client_name}</span>
+                {status === "pending" ? (
+                  <Checkbox
+                    checked={selectedIds.has(a.id)}
+                    onCheckedChange={() => toggle(a.id)}
+                    onClick={(e) => e.stopPropagation()}
+                    className="border-zinc-700 data-[state=checked]:bg-emerald-400 data-[state=checked]:text-zinc-950 shrink-0"
+                    data-testid={`approval-checkbox-${a.id}`}
+                  />
+                ) : (
+                  <div className="w-4 shrink-0" />
+                )}
+                <button
+                  onClick={() => { setSelected(a); setNote(a.decision_note || ""); }}
+                  className="flex-1 text-left flex items-center gap-3 min-w-0"
+                  data-testid={`approval-open-${a.id}`}
+                >
+                  <FileText size={16} className="text-zinc-500 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-mono uppercase tracking-wider text-zinc-500">{KIND_LABEL[a.kind] || a.kind}</span>
+                      <span className="text-zinc-700">·</span>
+                      <span className="text-[10px] font-mono uppercase tracking-wider text-zinc-500">{a.client_name}</span>
+                    </div>
+                    <div className="text-sm text-zinc-100 truncate font-medium mt-0.5">{a.title}</div>
+                    {a.summary && <div className="text-xs text-zinc-500 truncate mt-0.5">{a.summary}</div>}
                   </div>
-                  <div className="text-sm text-zinc-100 truncate font-medium mt-0.5">{a.title}</div>
-                  {a.summary && <div className="text-xs text-zinc-500 truncate mt-0.5">{a.summary}</div>}
-                </div>
-                <div className="flex items-center gap-3">
-                  <span className="text-[10px] font-mono text-zinc-500">{formatRelative(a.created_at)}</span>
-                  <StatusBadge status={a.status} />
-                </div>
-              </button>
+                  <div className="flex items-center gap-3 shrink-0">
+                    <span className="text-[10px] font-mono text-zinc-500">{formatRelative(a.created_at)}</span>
+                    <StatusBadge status={a.status} />
+                  </div>
+                </button>
+              </div>
             ))}
           </div>
         )}
