@@ -264,23 +264,36 @@ def _build_competitor_enrichment_block(client: Dict[str, Any]) -> tuple[str | No
     # Top-line metrics comparison (one row per competitor that has metrics)
     metric_rows: list[str] = []
     client_metrics = client.get("metrics") or {}
+
+    def _fmt_metric_row(label: str, m: Dict[str, Any]) -> str:
+        # Authority: prefer Semrush authority_score (0-100), fall back to DataForSEO domain_rating (0-1000).
+        auth = m.get("authority_score")
+        if auth is None and m.get("domain_rating") is not None:
+            try:
+                auth = round(float(m["domain_rating"]) / 10, 1)
+            except (TypeError, ValueError):
+                auth = None
+        parts = [
+            f"authority={auth if auth is not None else '?'}",
+            f"backlinks={m.get('backlinks') if m.get('backlinks') is not None else '?'}",
+            f"ref_domains={m.get('referring_domains') if m.get('referring_domains') is not None else '?'}",
+            f"dofollow={m.get('referring_domains_dofollow') if m.get('referring_domains_dofollow') is not None else '?'}",
+            f"organic_keywords={m.get('organic_keywords') if m.get('organic_keywords') is not None else '?'}",
+            f"organic_traffic={m.get('organic_traffic') if m.get('organic_traffic') is not None else '?'}",
+        ]
+        if m.get("spam_score") is not None:
+            parts.append(f"spam={m['spam_score']}")
+        return f"  - {label} | " + " | ".join(parts)
+
     if client_metrics.get("refreshed_at"):
-        metric_rows.append(
-            f"  - {client['domain']} (YOU) | DR={_dr(client_metrics.get('domain_rating'))} | "
-            f"backlinks={client_metrics.get('backlinks')} | ref_domains={client_metrics.get('referring_domains')} | "
-            f"dofollow={client_metrics.get('referring_domains_dofollow')} | spam={client_metrics.get('spam_score')}"
-        )
+        metric_rows.append(_fmt_metric_row(f"{client['domain']} (YOU)", client_metrics))
     for c in competitors:
         m = c.get("metrics") or {}
         if not m.get("refreshed_at"):
             continue
-        metric_rows.append(
-            f"  - {c.get('domain')} | DR={_dr(m.get('domain_rating'))} | "
-            f"backlinks={m.get('backlinks')} | ref_domains={m.get('referring_domains')} | "
-            f"dofollow={m.get('referring_domains_dofollow')} | spam={m.get('spam_score')}"
-        )
+        metric_rows.append(_fmt_metric_row(c.get("domain", "?"), m))
     if metric_rows:
-        blocks.append("Domain authority comparison (cached DataForSEO bulk backlinks):\n" + "\n".join(metric_rows))
+        blocks.append("Domain comparison (cached metrics · Semrush + DataForSEO):\n" + "\n".join(metric_rows))
 
     # Per-competitor ranked keywords + local gap calc + SF + Semrush
     for c in competitors[:5]:
