@@ -100,7 +100,7 @@ def _build_sf_block(crawl: Dict[str, Any] | None) -> str | None:
 
 async def _build_semrush_competitors_block(domain: str, db=None, client_id: str | None = None) -> str | None:
     # Prefer uploaded CSV when present (saves API quota)
-    if db and client_id:
+    if db is not None and client_id:
         try:
             up = await semrush_csv.get_upload(db, client_id, "competitors")
         except Exception:
@@ -128,7 +128,7 @@ async def _build_semrush_competitors_block(domain: str, db=None, client_id: str 
 
 async def _build_semrush_keywords_block(domain: str, db=None, client_id: str | None = None) -> str | None:
     """Prefer uploaded Organic Positions CSV; fall back to Semrush API."""
-    if db and client_id:
+    if db is not None and client_id:
         try:
             up = await semrush_csv.get_upload(db, client_id, "organic_positions")
         except Exception:
@@ -228,6 +228,131 @@ async def _build_dfs_gaps_block(client: Dict[str, Any]) -> str | None:
             lines.append(f"  - {g.get('keyword')} | vol={g.get('search_volume')} | cpc={g.get('cpc')}")
         blocks.append("\n".join(lines))
     return "\n\n".join(blocks) if blocks else None
+
+
+def _client_known_keywords(client: Dict[str, Any]) -> set[str]:
+    """Collect every keyword the client is already known to target/rank for —
+    pulled from the keyword_map plus any cached Semrush positions upload."""
+    kws: set[str] = set()
+    for k in ((client.get("keyword_map") or {}).get("keywords") or {}).keys():
+        if k:
+            kws.add(k.lower().strip())
+    sem = (client.get("semrush_uploads") or {}).get("organic_positions") or {}
+    for item in (sem.get("items") or []):
+        kw = (item.get("keyword") or "").lower().strip()
+        if kw:
+            kws.add(kw)
+    return kws
+
+
+def _build_competitor_enrichment_block(client: Dict[str, Any]) -> tuple[str | None, set[str]]:
+    """Build a single grounding block from the *cached* per-competitor enrichment
+    (metrics, ranked_keywords, semrush_uploads, sf_crawl). Also returns the set
+    of competitor IDs that had ranked-keyword cache (so we can skip live API
+    calls for them).
+
+    Pure cache — zero API cost."""
+    competitors = client.get("competitors") or []
+    if not competitors:
+        return None, set()
+
+    client_kws = _client_known_keywords(client)
+    blocks: list[str] = []
+    cached_kw_comp_ids: set[str] = set()
+
+    # Top-line metrics comparison (one row per competitor that has metrics)
+    metric_rows: list[str] = []
+    client_metrics = client.get("metrics") or {}
+    if client_metrics.get("refreshed_at"):
+        metric_rows.append(
+            f"  - {client['domain']} (YOU) | DR={_dr(client_metrics.get('domain_rating'))} | "
+            f"backlinks={client_metrics.get('backlinks')} | ref_domains={client_metrics.get('referring_domains')} | "
+            f"dofollow={client_metrics.get('referring_domains_dofollow')} | spam={client_metrics.get('spam_score')}"
+        )
+    for c in competitors:
+        m = c.get("metrics") or {}
+        if not m.get("refreshed_at"):
+            continue
+        metric_rows.append(
+            f"  - {c.get('domain')} | DR={_dr(m.get('domain_rating'))} | "
+            f"backlinks={m.get('backlinks')} | ref_domains={m.get('referring_domains')} | "
+            f"dofollow={m.get('referring_domains_dofollow')} | spam={m.get('spam_score')}"
+        )
+    if metric_rows:
+        blocks.append("Domain authority comparison (cached DataForSEO bulk backlinks):\n" + "\n".join(metric_rows))
+
+    # Per-competitor ranked keywords + local gap calc + SF + Semrush
+    for c in competitors[:5]:
+        comp_lines: list[str] = []
+        cd = c.get("domain", "?")
+
+        # Ranked keywords (cached)
+        ranked = c.get("ranked_keywords") or {}
+        items = ranked.get("items") or []
+        if items:
+            cached_kw_comp_ids.add(c.get("id"))
+            top = sorted(
+                [k for k in items if k.get("search_volume") is not None],
+                key=lambda k: (k.get("search_volume") or 0),
+                reverse=True,
+            )[:15]
+            comp_lines.append(f"Top ranked keywords for {cd} (cached · pos | volume | url):")
+            for k in top:
+                u = (k.get("url") or "").replace("https://", "").replace("http://", "")
+                comp_lines.append(f"  - {k.get('keyword')} | pos={k.get('position')} | vol={k.get('search_volume')} | {u[:80]}")
+
+            # Local gap: competitor keywords the client does NOT have in their map
+            if client_kws:
+                gap = []
+                for k in items:
+                    kw = (k.get("keyword") or "").lower().strip()
+                    if not kw or kw in client_kws:
+                        continue
+                    if (k.get("search_volume") or 0) < 50:
+                        continue
+                    gap.append(k)
+                gap = sorted(gap, key=lambda k: (k.get("search_volume") or 0), reverse=True)[:12]
+                if gap:
+                    comp_lines.append(f"Cached keyword gaps · {cd} ranks, {client.get('domain')} doesn't (vol | pos):")
+                    for k in gap:
+                        comp_lines.append(f"  - {k.get('keyword')} | vol={k.get('search_volume')} | pos={k.get('position')}")
+
+        # Semrush organic positions (per-competitor upload)
+        sem = (c.get("semrush_uploads") or {}).get("organic_positions") or {}
+        sem_items = sem.get("items") or []
+        if sem_items and not items:
+            top = sorted(sem_items, key=lambda k: (k.get("search_volume") or 0), reverse=True)[:10]
+            comp_lines.append(f"Top Semrush positions for {cd} (uploaded CSV):")
+            for k in top:
+                comp_lines.append(f"  - {k.get('keyword')} | pos={k.get('position')} | vol={k.get('search_volume')}")
+
+        # SF crawl summary
+        sf = c.get("sf_crawl") or {}
+        if sf.get("page_index") or sf.get("issues"):
+            pi = sf.get("page_index") or []
+            iss = sf.get("issues") or []
+            isum = sf.get("issues_summary") or {}
+            line = f"SF crawl of {cd}: {len(pi)} pages indexed, {len(iss)} issues"
+            if isum.get("high_priority") is not None:
+                line += f" ({isum.get('high_priority')} high priority)"
+            comp_lines.append(line)
+
+        if comp_lines:
+            blocks.append("\n".join(comp_lines))
+
+    if not blocks:
+        return None, cached_kw_comp_ids
+    return "\n\n".join(blocks), cached_kw_comp_ids
+
+
+def _dr(scaled: Any) -> str:
+    """DataForSEO domain_rating is 0-1000; render as 0-100."""
+    if scaled is None:
+        return "?"
+    try:
+        return str(round(float(scaled) / 10, 1))
+    except (TypeError, ValueError):
+        return str(scaled)
 
 
 async def _latest_run_results(db, client_id: str, rtype: str) -> Dict[str, Any] | None:
@@ -458,10 +583,21 @@ async def run_workflow(db: AsyncIOMotorDatabase, run_id: str) -> None:
 
         elif rtype == "competitor_analysis":
             comp_context = None
+            cached_kw_comp_ids: set[str] = set()
+
+            # 1) Cached per-competitor enrichment (metrics, ranked_keywords, semrush, sf)
+            try:
+                eb, cached_kw_comp_ids = _build_competitor_enrichment_block(client)
+                if eb:
+                    comp_context = eb
+                    await _log(db, run_id, "competitor", f"Grounded with cached enrichment ({len(cached_kw_comp_ids)} competitor(s) have ranked-keyword cache)", "success")
+            except Exception as e:
+                await _log(db, run_id, "competitor", f"Cached enrichment unavailable: {e}", "warning")
+
             try:
                 cb = await _build_semrush_competitors_block(client.get("domain", ""), db, client["id"])
                 if cb:
-                    comp_context = cb
+                    comp_context = (comp_context + "\n\n" + cb) if comp_context else cb
                     src = "uploaded CSV" if "uploaded CSV" in cb else "API"
                     await _log(db, run_id, "competitor", f"Grounded with Semrush competitors ({src})", "info")
             except Exception as e:
@@ -476,13 +612,17 @@ async def run_workflow(db: AsyncIOMotorDatabase, run_id: str) -> None:
             except Exception:
                 pass
 
-            # DataForSEO keyword gaps for each user-tracked competitor
+            # DataForSEO keyword gaps — ONLY for competitors WITHOUT cached ranked_keywords
             try:
                 if dataforseo.is_configured() and client.get("domain") and client.get("competitors"):
                     gap_blocks = []
+                    skipped = 0
                     for comp in (client.get("competitors") or [])[:3]:
                         comp_domain = comp.get("domain")
                         if not comp_domain:
+                            continue
+                        if comp.get("id") in cached_kw_comp_ids:
+                            skipped += 1
                             continue
                         gaps = await dataforseo.domain_intersection_gaps(
                             stronger_domain=comp_domain,
@@ -496,7 +636,9 @@ async def run_workflow(db: AsyncIOMotorDatabase, run_id: str) -> None:
                             gap_blocks.append("\n".join(lines))
                     if gap_blocks:
                         comp_context = (comp_context or "") + "\n\n" + "\n\n".join(gap_blocks)
-                        await _log(db, run_id, "competitor", f"Grounded with DataForSEO keyword gaps · {len(gap_blocks)} competitors", "success")
+                        await _log(db, run_id, "competitor", f"Grounded with DataForSEO keyword gaps · {len(gap_blocks)} live, {skipped} from cache", "success")
+                    elif skipped:
+                        await _log(db, run_id, "competitor", f"Skipped {skipped} live DataForSEO calls (cached ranked-keywords available)", "info")
             except Exception as e:
                 await _log(db, run_id, "competitor", f"DataForSEO gap data unavailable: {e}", "warning")
 
@@ -550,6 +692,12 @@ async def run_workflow(db: AsyncIOMotorDatabase, run_id: str) -> None:
                 b = await _build_dfs_gaps_block(client)
                 if b:
                     blocks.append(b)
+            except Exception:
+                pass
+            try:
+                eb, _ = _build_competitor_enrichment_block(client)
+                if eb:
+                    blocks.append(eb)
             except Exception:
                 pass
             try:

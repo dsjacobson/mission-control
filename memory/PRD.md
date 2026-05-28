@@ -215,6 +215,14 @@ only), Screaming Frog MCP.
   - `lib/api.js` — competitor + sf-bridge route helpers.
 - Verified: 13/13 backend tests pass (iteration_4.json), frontend flows verified end-to-end.
 
+### 2026-02 — Competitor workflow consumes cached enrichment
+- `workflow.py`: new `_build_competitor_enrichment_block(client)` + `_client_known_keywords(client)` helpers.
+- `competitor_analysis` run type now grounds the agent prompt with cached `competitor.metrics`, `competitor.ranked_keywords`, `competitor.semrush_uploads`, and `competitor.sf_crawl` — and computes a LOCAL keyword gap (competitor keywords ∉ client keyword_map) for any competitor with cached ranked_keywords.
+- Live DataForSEO `domain_intersection_gaps` calls are now SKIPPED for any competitor that already has cached `ranked_keywords` (≈$0.04 saved per cached competitor per run).
+- `strategy_sprint` run also pulls the same enrichment block into its grounding stack.
+- Adjacent fix: replaced motor `if db` truthy checks with `if db is not None` (motor DB objects raise TypeError on bool()); this had been silently suppressing Semrush CSV grounding.
+- Verified: live `competitor_analysis` run on Cooking Italians vs Giallo Zafferano cited real cached topics ("00 flour recipes" hub) and skipped 1 live DataForSEO call. 8 new unit tests pass.
+
 ## Notes
 - `EMERGENT_LLM_KEY` lives in `/app/backend/.env`.
 - Frontend backend URL: `REACT_APP_BACKEND_URL` (do not hardcode).
