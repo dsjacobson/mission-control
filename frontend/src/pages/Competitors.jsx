@@ -21,6 +21,7 @@ export default function Competitors() {
   const [refreshingClient, setRefreshingClient] = useState(false);
   const [refreshingAll, setRefreshingAll] = useState(false);
   const [generatingDeliverable, setGeneratingDeliverable] = useState(false);
+  const [pendingDeliverables, setPendingDeliverables] = useState([]);
   const deliverablePollRef = useRef(null);
 
   useEffect(() => {
@@ -75,6 +76,23 @@ export default function Competitors() {
     }
   };
 
+  const loadPendingDeliverables = async () => {
+    try {
+      const rows = await api.listApprovals({ client_id: clientId, status: "pending" });
+      setPendingDeliverables((rows || []).filter((a) => a.kind === "competitive_deliverable"));
+    } catch {}
+  };
+
+  // cleanup
+  useEffect(() => () => {
+    if (deliverablePollRef.current) clearInterval(deliverablePollRef.current);
+  }, []);
+
+  useEffect(() => {
+    loadPendingDeliverables();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clientId]);
+
   const generateDeliverable = async () => {
     if (!client?.competitors?.length) {
       toast.error("Add at least one competitor first");
@@ -109,7 +127,8 @@ export default function Competitors() {
             );
             setGeneratingDeliverable(false);
             if (match) {
-              toast.success("Deliverable ready");
+              toast.success("Deliverable ready — review & approve below");
+              // Go straight to the full deliverable view; user can approve from there
               navigate(`/clients/${clientId}/deliverables/competitive/${match.id}`);
             } else {
               toast.error("Run completed but no deliverable approval found");
@@ -186,6 +205,33 @@ export default function Competitors() {
           {generatingDeliverable ? "Generating…" : "Generate Client Deliverable"}
         </Button>
       </PageHeader>
+
+      {pendingDeliverables.length > 0 && (
+        <div className="px-8 py-3 border-b border-zinc-800 bg-amber-400/[0.04]" data-testid="pending-deliverables-banner">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="text-xs text-zinc-300 flex items-center gap-2">
+              <Sparkles size={12} className="text-amber-400" />
+              <span>
+                {pendingDeliverables.length} pending deliverable{pendingDeliverables.length === 1 ? "" : "s"} awaiting your approval — they won't appear in the Deliverables tab until you approve.
+              </span>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              {pendingDeliverables.slice(0, 3).map((a) => (
+                <Link
+                  key={a.id}
+                  to={`/clients/${clientId}/deliverables/competitive/${a.id}`}
+                  className="inline-flex items-center gap-1.5 text-[11px] px-2 py-1 bg-zinc-900 border border-zinc-700 hover:border-amber-400/40 rounded-sm text-zinc-200"
+                  data-testid={`open-pending-${a.id}`}
+                >
+                  <FileText size={10} />
+                  Review
+                  <ChevronRight size={10} />
+                </Link>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       <Section title="Add a competitor" testId="add-competitor-section">
         <div className="rounded-sm border border-zinc-800 bg-zinc-900 p-4 grid grid-cols-1 md:grid-cols-3 gap-3">
