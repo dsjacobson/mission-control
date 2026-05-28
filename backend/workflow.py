@@ -24,6 +24,7 @@ AGENT_FOR_TYPE = {
     "technical_audit": "audit",
     "competitor_analysis": "competitor",
     "strategy_sprint": "strategy",
+    "competitive_deliverable": "deliverable",
 }
 
 
@@ -419,6 +420,14 @@ async def _create_approvals_for_run(db, run: Dict[str, Any]) -> None:
             summary=(results.get("executive_summary") or "")[:200],
             content=results,
         ))
+    elif rtype == "competitive_deliverable":
+        approvals.append(Approval(
+            run_id=run_id, client_id=client_id, client_name=client_name,
+            kind="competitive_deliverable",
+            title=results.get("title") or f"Competitive Analysis · {client_name}",
+            summary=(results.get("executive_summary") or "")[:200],
+            content=results,
+        ))
 
     if approvals:
         await db.approvals.insert_many([a.model_dump() for a in approvals])
@@ -721,6 +730,62 @@ async def run_workflow(db: AsyncIOMotorDatabase, run_id: str) -> None:
             if prior_combined:
                 await _log(db, run_id, "strategy", f"Including prior findings from {len(prior_combined)} run(s)", "info")
             results = await agents.strategy_synthesis(run_id, client, objective, prior=prior_combined or None, seo_context=seo_context)
+        elif rtype == "competitive_deliverable":
+            # Build the richest possible grounding block from cached data.
+            blocks: list[str] = []
+
+            # Client snapshot
+            client_metrics = client.get("metrics") or {}
+            if client_metrics.get("refreshed_at"):
+                blocks.append(
+                    f"CLIENT METRICS ({client.get('domain')}):\n"
+                    f"  - Authority Score: {client_metrics.get('authority_score')}\n"
+                    f"  - Backlinks: {client_metrics.get('backlinks')}\n"
+                    f"  - Referring domains: {client_metrics.get('referring_domains')}\n"
+                    f"  - Dofollow ref. domains: {client_metrics.get('referring_domains_dofollow')}\n"
+                    f"  - Organic keywords (Semrush US): {client_metrics.get('organic_keywords')}\n"
+                    f"  - Estimated organic traffic (monthly): {client_metrics.get('organic_traffic')}\n"
+                )
+
+            # Detailed per-competitor enrichment (uses our existing helper)
+            try:
+                eb, _ = _build_competitor_enrichment_block(client)
+                if eb:
+                    blocks.append(eb)
+                    await _log(db, run_id, "deliverable", "Grounded with cached competitor enrichment", "success")
+            except Exception as e:  # noqa: BLE001
+                await _log(db, run_id, "deliverable", f"Enrichment build failed: {e}", "warning")
+
+            # SF audit summary if present
+            try:
+                crawl = await screamingfrog.get_crawl(db, client["id"])
+                sb = _build_sf_block(crawl)
+                if sb:
+                    blocks.append(sb)
+                    await _log(db, run_id, "deliverable", "Grounded with Screaming Frog audit", "info")
+            except Exception:
+                pass
+
+            # GSC snapshot for client's existing top queries
+            try:
+                gb = await _build_gsc_block(db, client["id"])
+                if gb:
+                    blocks.append(gb)
+                    await _log(db, run_id, "deliverable", "Grounded with GSC performance", "info")
+            except Exception:
+                pass
+
+            # Keyword map summary
+            kw_map = (client.get("keyword_map") or {}).get("keywords") or {}
+            if kw_map:
+                blocks.append(f"CLIENT KEYWORD MAP: {len(kw_map)} mapped keywords in the workspace.")
+
+            if not blocks:
+                await _log(db, run_id, "deliverable", "No competitor enrichment found — refresh metrics first", "warning")
+                results = {}
+            else:
+                grounding = "\n\n".join(blocks)
+                results = await agents.competitive_deliverable(run_id, client, grounding, objective)
         else:
             results = {}
 

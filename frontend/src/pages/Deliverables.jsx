@@ -28,6 +28,7 @@ const KIND_META = {
   page_optimization: { label: "Page optimizations", icon: Pencil, tone: "text-sky-400" },
   strategy_doc: { label: "Strategy docs", icon: Lightbulb, tone: "text-sky-400" },
   competitor_insight: { label: "Competitor insights", icon: Telescope, tone: "text-rose-400" },
+  competitive_deliverable: { label: "Competitive deliverables", icon: Telescope, tone: "text-emerald-400" },
   wordpress_draft: { label: "WordPress drafts", icon: FileText, tone: "text-violet-300" },
 };
 
@@ -210,6 +211,7 @@ function DeliverableCard({ item, kind, busy, onProgress, onCopy, onDownload }) {
           {kind === "content_brief" && <ContentBriefPreview content={item.content} />}
           {kind === "technical_action" && <TechActionPreview content={item.content} />}
           {kind === "strategy_doc" && <StrategyPreview content={item.content} />}
+          {kind === "competitive_deliverable" && <CompetitiveDeliverablePreview content={item.content} clientId={item.client_id} approvalId={item.id} />}
           {kind === "page_optimization" && (
             <div className="mt-3">
               <PageOptimizationCard content={item.content} testIdPrefix={`po-${item.id}`} />
@@ -323,6 +325,43 @@ function StrategyPreview({ content }) {
           </ul>
         </div>
       )}
+    </div>
+  );
+}
+
+function CompetitiveDeliverablePreview({ content, clientId, approvalId }) {
+  if (!content) return null;
+  const opps = (content.top_opportunities || []).slice(0, 3);
+  return (
+    <div className="mt-3 text-xs">
+      {content.executive_summary && (
+        <div className="text-zinc-300 leading-relaxed">{content.executive_summary}</div>
+      )}
+      {opps.length > 0 && (
+        <div className="mt-3">
+          <div className="text-zinc-500 font-mono uppercase tracking-wider text-[10px] mb-1.5">Top opportunities</div>
+          <ul className="space-y-1">
+            {opps.map((o, i) => (
+              <li key={i} className="text-zinc-300 flex items-start gap-1.5">
+                <span className="text-emerald-400 font-mono">{o.rank ?? i + 1}.</span>
+                <span>
+                  <span className="text-zinc-100">{o.title}</span>
+                  {o.primary_keyword && <span className="text-emerald-300 font-mono ml-1.5">{o.primary_keyword}</span>}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <div className="mt-3">
+        <Link
+          to={`/clients/${clientId}/deliverables/competitive/${approvalId}`}
+          className="inline-flex items-center gap-1 px-3 py-1.5 bg-zinc-50 text-zinc-950 hover:bg-zinc-200 rounded-sm text-xs font-medium"
+          data-testid={`open-deliverable-${approvalId}`}
+        >
+          Open full report <ChevronRight size={11} />
+        </Link>
+      </div>
     </div>
   );
 }

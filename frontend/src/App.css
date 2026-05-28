@@ -1,2 +1,15 @@
 /* Reserved for component-level overrides if needed */
 .App { min-height: 100vh; }
+
+/* Print styles for client deliverables (Competitive Analysis, etc.) */
+@media print {
+  /* Hide app chrome */
+  .no-print, aside, nav, header[role="banner"] { display: none !important; }
+  /* Make sure the deliverable fills the page */
+  body, html, #root, .App { background: white !important; }
+  /* Section breaks */
+  .competitive-deliverable section { break-inside: avoid; }
+  .competitive-deliverable { font-size: 11pt; }
+  /* Tighten margins */
+  @page { margin: 16mm 14mm; }
+}

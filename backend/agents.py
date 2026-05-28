@@ -39,6 +39,7 @@ AGENT_LABELS = {
     "structural_fix": "Structural Fix Agent",
     "implementation_brief": "Implementation Brief Agent",
     "page_keyword": "Page Keyword Analyst",
+    "deliverable": "Deliverable Synthesist",
 }
 
 
@@ -110,6 +111,18 @@ SYSTEM_PROMPTS = {
         "body sample, identify the single primary target keyword the page is best "
         "positioned to rank for in Google. Pick the most specific phrase that the "
         "page's content genuinely covers, in lowercase. Output strict JSON only."
+    ),
+    "deliverable": (
+        "You are a senior SEO consultant writing a high-stakes client deliverable. "
+        "The reader is the client's marketing leader; they need to see (1) the honest "
+        "current state, (2) where the gap is to leading competitors, and (3) the exact "
+        "actions to close that gap over 30/60/90 days. Be specific: cite real numbers "
+        "from the data provided (Authority Score, backlinks, organic traffic, ranked "
+        "keywords) and real URLs/keywords from the cached enrichment. Never invent "
+        "metrics. Be confident, decisive, and prescriptive — clients pay you to tell "
+        "them what to do, not to weigh options. Each action MUST be concrete enough "
+        "that an intern could execute it without asking follow-up questions. Output "
+        "strict JSON only — no preamble, no markdown fences."
     ),
 }
 
@@ -759,3 +772,129 @@ Return strict JSON:
     data["relevance_per_mapped"] = {k.lower(): v for k, v in rel.items() if isinstance(v, str)}
     return data
 
+
+
+# ---------- Competitive Deliverable ----------
+
+async def competitive_deliverable(
+    run_id: str,
+    client: Dict[str, Any],
+    grounding: str,
+    objective: str = "",
+) -> Dict[str, Any]:
+    """Synthesize a full, client-facing Competitive Analysis deliverable.
+
+    `grounding` is a long pre-built block of cached enrichment data — authority
+    scores, backlinks, ranked keywords, gap calcs, SF data — so the model can
+    cite real numbers and real competitor URLs without inventing anything.
+    """
+    prompt = f"""Write a complete Competitive Analysis deliverable for the client below.
+
+CLIENT
+- Name: {client.get('name')}
+- Domain: {client.get('domain')}
+- Industry: {client.get('industry') or 'unspecified'}
+- Markets: {', '.join(client.get('target_markets') or []) or 'unspecified'}
+- Goals: {client.get('goals') or 'general SEO growth'}
+- Objective for this report: {objective or 'grow organic visibility and close gap to leading competitors'}
+
+DATA (cite these numbers verbatim; do not invent metrics or URLs):
+{grounding}
+
+Return strict JSON with this exact shape:
+{{
+  "title": "Competitive Analysis · <client name>",
+  "subtitle": "1-line positioning statement",
+  "prepared_for": "{client.get('name')}",
+  "executive_summary": "3-5 sentence honest assessment. State the client's current Authority Score, organic traffic, and keyword footprint vs the leading competitor in plain English. End with the single biggest strategic move.",
+  "current_position": {{
+    "authority_score": <int or null>,
+    "backlinks": <int or null>,
+    "referring_domains": <int or null>,
+    "organic_keywords": <int or null>,
+    "organic_traffic": <int or null>,
+    "narrative": "2-sentence reading of these numbers"
+  }},
+  "competitor_landscape": [
+    {{
+      "name": "competitor name",
+      "domain": "domain",
+      "tier": "market_leader | direct_rival | aspirational",
+      "authority_score": <int or null>,
+      "organic_traffic": <int or null>,
+      "key_strengths": ["1 sentence each", "..."],
+      "key_weaknesses": ["1 sentence each", "..."],
+      "how_to_beat_them": "1-2 sentences naming the specific angle"
+    }}
+  ],
+  "gap_analysis": {{
+    "authority_gap": {{ "label": "Authority Score", "your_value": <int>, "their_value": <int>, "leader": "domain", "implication": "what this means in practice" }},
+    "traffic_gap": {{ "label": "Estimated organic traffic", "your_value": <int>, "their_value": <int>, "leader": "domain", "implication": "..." }},
+    "backlink_gap": {{ "label": "Referring domains", "your_value": <int>, "their_value": <int>, "leader": "domain", "implication": "..." }},
+    "keyword_gap": {{ "label": "Keywords they rank for that you don't", "count": <int>, "leader": "domain", "implication": "..." }}
+  }},
+  "top_opportunities": [
+    {{
+      "rank": 1,
+      "title": "concrete opportunity headline",
+      "primary_keyword": "lowercase keyword from cached data",
+      "supporting_keywords": ["...", "..."],
+      "search_volume": <int or null>,
+      "competitor_url_to_outrank": "real URL from cached ranked_keywords",
+      "competitor_position": <int or null>,
+      "why_winnable": "1-2 sentences citing the specific reason (lower competition, content gap, etc.)",
+      "recommended_format": "long-form recipe | comparison page | category hub | etc.",
+      "effort": "low | medium | high",
+      "expected_impact": "low | medium | high",
+      "first_step": "the single concrete first action (e.g. 'Brief and assign content writer this week')"
+    }}
+  ],
+  "content_strategy": {{
+    "positioning": "1-2 sentence content positioning vs the leader",
+    "pillars": [
+      {{ "name": "pillar topic", "rationale": "why this pillar", "example_targets": ["kw1", "kw2"] }}
+    ],
+    "format_priorities": ["e.g. 'Long-form authoritative recipes with author E-E-A-T'", "..."],
+    "voice_and_eeat": "specific guidance on how the client should signal expertise"
+  }},
+  "link_building_strategy": {{
+    "current_gap_summary": "1-2 sentences quantifying the referring-domain gap",
+    "tactics": [
+      {{ "name": "tactic name", "rationale": "...", "target_links_per_month": <int>, "first_step": "concrete first move" }}
+    ]
+  }},
+  "technical_priorities": [
+    {{ "title": "...", "rationale": "...", "first_step": "..." }}
+  ],
+  "action_plan": {{
+    "30_days": [
+      {{ "task": "specific action", "owner": "content writer | SEO lead | dev | client", "deliverable": "what 'done' looks like" }}
+    ],
+    "60_days": [
+      {{ "task": "...", "owner": "...", "deliverable": "..." }}
+    ],
+    "90_days": [
+      {{ "task": "...", "owner": "...", "deliverable": "..." }}
+    ]
+  }},
+  "success_metrics": [
+    {{ "metric": "Authority Score", "current": <int>, "target_90d": <int>, "target_180d": <int> }},
+    {{ "metric": "Organic traffic (monthly)", "current": <int>, "target_90d": <int>, "target_180d": <int> }},
+    {{ "metric": "Ranked keywords", "current": <int>, "target_90d": <int>, "target_180d": <int> }},
+    {{ "metric": "Referring domains", "current": <int>, "target_90d": <int>, "target_180d": <int> }}
+  ],
+  "closing_statement": "2-sentence call to action — what to do this week to start."
+}}
+
+RULES:
+- Cite ONLY numbers and URLs that appear verbatim in the DATA section above.
+- "top_opportunities" must contain 8-12 items, ordered by impact-vs-effort.
+- "30_days" / "60_days" / "90_days" must each contain 3-5 actions.
+- "competitor_landscape" must include every competitor listed in the DATA section.
+- Be concrete about the FIRST_STEP in every section — the client should be able to start tomorrow.
+"""
+    raw = await _run_agent("deliverable", run_id, prompt)
+    data = _safe_parse_json(raw, fallback={})
+    if not isinstance(data, dict):
+        return {"raw": raw}
+    return data

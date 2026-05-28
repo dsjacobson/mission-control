@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from "react";
-import { useParams, Link } from "react-router-dom";
-import { Plus, Trash2, RefreshCw, ChevronRight, Loader2 } from "lucide-react";
+import React, { useEffect, useRef, useState } from "react";
+import { useParams, Link, useNavigate } from "react-router-dom";
+import { Plus, Trash2, RefreshCw, ChevronRight, Loader2, Sparkles, FileText } from "lucide-react";
 import api from "../lib/api";
 import { PageHeader, Section, EmptyState } from "../components/Bits";
 import { useClients } from "../lib/ClientContext";
@@ -12,6 +12,7 @@ import { toast } from "sonner";
 
 export default function Competitors() {
   const { clientId } = useParams();
+  const navigate = useNavigate();
   const { activeClient, setActiveClientId, refresh } = useClients();
   const [client, setClient] = useState(null);
   const [comparison, setComparison] = useState(null);
@@ -19,6 +20,8 @@ export default function Competitors() {
   const [busy, setBusy] = useState(false);
   const [refreshingClient, setRefreshingClient] = useState(false);
   const [refreshingAll, setRefreshingAll] = useState(false);
+  const [generatingDeliverable, setGeneratingDeliverable] = useState(false);
+  const deliverablePollRef = useRef(null);
 
   useEffect(() => {
     setActiveClientId(clientId);
@@ -72,6 +75,69 @@ export default function Competitors() {
     }
   };
 
+  const generateDeliverable = async () => {
+    if (!client?.competitors?.length) {
+      toast.error("Add at least one competitor first");
+      return;
+    }
+    const hasMetrics = client.competitors.some((c) => c.metrics?.refreshed_at);
+    if (!hasMetrics) {
+      toast.error("Refresh competitor metrics first ('Refresh all' button)");
+      return;
+    }
+    setGeneratingDeliverable(true);
+    try {
+      const run = await api.createRun({
+        client_id: clientId,
+        type: "competitive_deliverable",
+        objective: "Generate full client-facing competitive analysis deliverable",
+      });
+      toast.success("Generating deliverable… this takes ~30s");
+
+      // Poll the run until completion, then find the new approval
+      const startedAt = Date.now();
+      deliverablePollRef.current = setInterval(async () => {
+        try {
+          const r = await api.getRun(run.id);
+          if (r.status === "completed") {
+            clearInterval(deliverablePollRef.current);
+            deliverablePollRef.current = null;
+            // Find the matching approval
+            const approvals = await api.listApprovals({ client_id: clientId });
+            const match = (approvals || []).find(
+              (a) => a.run_id === run.id && a.kind === "competitive_deliverable",
+            );
+            setGeneratingDeliverable(false);
+            if (match) {
+              toast.success("Deliverable ready");
+              navigate(`/clients/${clientId}/deliverables/competitive/${match.id}`);
+            } else {
+              toast.error("Run completed but no deliverable approval found");
+            }
+          } else if (r.status === "failed") {
+            clearInterval(deliverablePollRef.current);
+            deliverablePollRef.current = null;
+            setGeneratingDeliverable(false);
+            toast.error(`Generation failed: ${r.error || "unknown error"}`);
+          } else if (Date.now() - startedAt > 5 * 60 * 1000) {
+            clearInterval(deliverablePollRef.current);
+            deliverablePollRef.current = null;
+            setGeneratingDeliverable(false);
+            toast.error("Generation timed out after 5 minutes");
+          }
+        } catch (e) { /* keep polling */ }
+      }, 3000);
+    } catch (e) {
+      setGeneratingDeliverable(false);
+      toast.error(e?.response?.data?.detail || "Failed to start generation");
+    }
+  };
+
+  // cleanup
+  useEffect(() => () => {
+    if (deliverablePollRef.current) clearInterval(deliverablePollRef.current);
+  }, []);
+
   const add = async () => {
     if (!form.name.trim() || !form.domain.trim()) {
       toast.error("Name and domain required");
@@ -108,7 +174,18 @@ export default function Competitors() {
         kicker={client?.name || "Workspace"}
         title="Competitors"
         description="Tracked competitors are used by the Competitor Analysis Agent."
-      />
+      >
+        <Button
+          onClick={generateDeliverable}
+          disabled={generatingDeliverable || !client?.competitors?.length}
+          className="bg-emerald-400/90 text-zinc-950 hover:bg-emerald-300 rounded-sm"
+          data-testid="generate-deliverable-btn"
+          title="Synthesize a client-ready competitive analysis report from your cached data"
+        >
+          {generatingDeliverable ? <Loader2 size={13} className="mr-1.5 animate-spin" /> : <Sparkles size={13} className="mr-1.5" />}
+          {generatingDeliverable ? "Generating…" : "Generate Client Deliverable"}
+        </Button>
+      </PageHeader>
 
       <Section title="Add a competitor" testId="add-competitor-section">
         <div className="rounded-sm border border-zinc-800 bg-zinc-900 p-4 grid grid-cols-1 md:grid-cols-3 gap-3">

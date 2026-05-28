@@ -16,6 +16,7 @@ import {
   DialogTitle,
 } from "../components/ui/dialog";
 import { toast } from "sonner";
+import CompetitiveDeliverableView from "../components/CompetitiveDeliverableView";
 
 const KIND_LABEL = {
   content_brief: "Content brief",
@@ -23,6 +24,7 @@ const KIND_LABEL = {
   strategy_doc: "Strategy",
   wordpress_draft: "WordPress draft",
   competitor_insight: "Competitor insight",
+  competitive_deliverable: "Competitive deliverable",
 };
 
 export default function Approvals() {
@@ -147,9 +149,46 @@ export default function Approvals() {
       </Section>
 
       <Dialog open={!!selected} onOpenChange={(o) => !o && setSelected(null)}>
-        <DialogContent className="bg-zinc-950 border-zinc-800 text-zinc-100 max-w-2xl rounded-sm">
+        <DialogContent className={`bg-zinc-950 border-zinc-800 text-zinc-100 rounded-sm ${selected?.kind === "competitive_deliverable" ? "max-w-5xl max-h-[90vh] p-0 overflow-hidden" : "max-w-2xl"}`}>
           {selected && (
             <>
+              {selected.kind === "competitive_deliverable" ? (
+                <>
+                  <div className="px-6 pt-5 pb-3 border-b border-zinc-800">
+                    <div className="text-[10px] font-mono uppercase tracking-wider text-zinc-500">
+                      {KIND_LABEL[selected.kind]} · {selected.client_name}
+                    </div>
+                    <DialogTitle className="font-heading text-zinc-50">{selected.title}</DialogTitle>
+                    <DialogDescription className="sr-only">Review and approve the deliverable.</DialogDescription>
+                  </div>
+                  <div className="overflow-y-auto max-h-[65vh]">
+                    <CompetitiveDeliverableView content={selected.content} />
+                  </div>
+                  <div className="px-6 py-3 border-t border-zinc-800 flex items-center gap-2">
+                    <Link
+                      to={`/clients/${selected.client_id}/deliverables/competitive/${selected.id}`}
+                      className="text-xs text-emerald-300 hover:text-emerald-200 underline mr-auto"
+                      onClick={() => setSelected(null)}
+                      data-testid="open-deliverable-fullview"
+                    >
+                      Open full-page view
+                    </Link>
+                    {selected.status === "pending" ? (
+                      <>
+                        <Button onClick={() => decide("rejected")} variant="ghost" className="text-rose-400 hover:bg-rose-400/10 hover:text-rose-300 rounded-sm" data-testid="reject-approval">
+                          <X size={14} className="mr-1.5" /> Reject
+                        </Button>
+                        <Button onClick={() => decide("approved")} className="bg-emerald-500/90 hover:bg-emerald-500 text-zinc-950 rounded-sm" data-testid="approve-approval">
+                          <Check size={14} className="mr-1.5" /> Approve
+                        </Button>
+                      </>
+                    ) : (
+                      <Button variant="ghost" onClick={() => setSelected(null)} className="text-zinc-300 hover:bg-zinc-900 rounded-sm">Close</Button>
+                    )}
+                  </div>
+                </>
+              ) : (
+              <>
               <DialogHeader>
                 <div className="text-[10px] font-mono uppercase tracking-wider text-zinc-500">
                   {KIND_LABEL[selected.kind]} · {selected.client_name}
@@ -202,6 +241,8 @@ export default function Approvals() {
                   </Button>
                 )}
               </DialogFooter>
+              </>
+              )}
             </>
           )}
         </DialogContent>

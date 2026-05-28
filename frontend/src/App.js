@@ -11,6 +11,7 @@ import ClientWorkspace from "@/pages/ClientWorkspace";
 import Workflows from "@/pages/Workflows";
 import Competitors from "@/pages/Competitors";
 import CompetitorDetail from "@/pages/CompetitorDetail";
+import CompetitiveDeliverable from "@/pages/CompetitiveDeliverable";
 import Integrations from "@/pages/Integrations";
 import Approvals from "@/pages/Approvals";
 import Deliverables from "@/pages/Deliverables";
@@ -38,6 +39,7 @@ function App() {
               <Route path="/clients/:clientId/integrations" element={<Integrations />} />
               <Route path="/clients/:clientId/approvals" element={<Approvals />} />
               <Route path="/clients/:clientId/deliverables" element={<Deliverables />} />
+              <Route path="/clients/:clientId/deliverables/competitive/:approvalId" element={<CompetitiveDeliverable />} />
               <Route path="/clients/:clientId/tasks" element={<Tasks />} />
               <Route path="/clients/:clientId/keyword-map" element={<KeywordMap />} />
               <Route path="/approvals" element={<Approvals />} />

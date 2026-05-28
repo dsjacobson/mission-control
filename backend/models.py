@@ -88,6 +88,7 @@ WorkflowType = Literal[
     "technical_audit",
     "competitor_analysis",
     "strategy_sprint",
+    "competitive_deliverable",
 ]
 
 RunStatus = Literal["queued", "running", "completed", "failed"]
@@ -136,6 +137,7 @@ ApprovalKind = Literal[
     "wordpress_draft",
     "competitor_insight",
     "page_optimization",
+    "competitive_deliverable",
 ]
 
 
