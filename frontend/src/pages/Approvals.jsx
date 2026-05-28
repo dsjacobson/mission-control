@@ -155,9 +155,36 @@ export default function Approvals() {
 
   const headerKicker = clientId ? activeClient?.name || "Workspace" : "All workspaces";
 
+  const archiveDecided = async () => {
+    if (!clientId) {
+      toast.error("Archive is per-client only");
+      return;
+    }
+    if (!window.confirm("Archive all approved approvals for this client? They'll be hidden from the queue but kept on file.")) return;
+    try {
+      const r = await api.archiveDecidedApprovals(clientId);
+      toast.success(`Archived ${r.archived} approvals`);
+      fetchItems();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed to archive");
+    }
+  };
+
   return (
     <div data-testid="approvals-page">
-      <PageHeader kicker={headerKicker} title="Approval queue" description="Every output is held here until you decide." />
+      <PageHeader kicker={headerKicker} title="Approval queue" description="Every output is held here until you decide.">
+        {clientId && (
+          <Button
+            onClick={archiveDecided}
+            variant="ghost"
+            className="text-zinc-300 hover:text-zinc-100 hover:bg-zinc-800 rounded-sm h-8 text-xs"
+            data-testid="archive-decided-btn"
+            title="Hide all approved approvals for this client from the queue (kept on file)"
+          >
+            <Trash2 size={12} className="mr-1.5" /> Archive decided
+          </Button>
+        )}
+      </PageHeader>
 
       <Section
         title="Queue"

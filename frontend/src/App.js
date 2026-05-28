@@ -15,7 +15,6 @@ import CompetitiveDeliverable from "@/pages/CompetitiveDeliverable";
 import Integrations from "@/pages/Integrations";
 import Approvals from "@/pages/Approvals";
 import Deliverables from "@/pages/Deliverables";
-import Tasks from "@/pages/Tasks";
 import KeywordMap from "@/pages/KeywordMap";
 import SharePage from "@/pages/SharePage";
 import History from "@/pages/History";
@@ -40,8 +39,9 @@ function App() {
               <Route path="/clients/:clientId/approvals" element={<Approvals />} />
               <Route path="/clients/:clientId/deliverables" element={<Deliverables />} />
               <Route path="/clients/:clientId/deliverables/competitive/:approvalId" element={<CompetitiveDeliverable />} />
-              <Route path="/clients/:clientId/tasks" element={<Tasks />} />
               <Route path="/clients/:clientId/keyword-map" element={<KeywordMap />} />
+              {/* Legacy: /tasks redirects to deliverables */}
+              <Route path="/clients/:clientId/tasks" element={<Navigate to="../deliverables" replace />} />
               <Route path="/approvals" element={<Approvals />} />
               <Route path="/history" element={<History />} />
               <Route path="/runs/:runId" element={<RunDetails />} />

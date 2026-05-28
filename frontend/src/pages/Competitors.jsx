@@ -98,46 +98,37 @@ export default function Competitors() {
       toast.error("Add at least one competitor first");
       return;
     }
-    const hasMetrics = client.competitors.some((c) => c.metrics?.refreshed_at);
-    if (!hasMetrics) {
-      toast.error("Refresh competitor metrics first ('Refresh all' button)");
-      return;
-    }
     setGeneratingDeliverable(true);
     try {
-      const run = await api.createRun({
-        client_id: clientId,
-        type: "competitive_deliverable",
-        objective: "Generate full client-facing competitive analysis deliverable",
-      });
-      toast.success("Generating deliverable… this takes ~30s");
+      const r = await api.runCompetitiveAnalysis(clientId);
+      toast.success(`Refreshed ${r.metrics_refreshed} metrics · generating deliverable…`);
 
       // Poll the run until completion, then find the new approval
       const startedAt = Date.now();
       deliverablePollRef.current = setInterval(async () => {
         try {
-          const r = await api.getRun(run.id);
-          if (r.status === "completed") {
+          const run = await api.getRun(r.run_id);
+          if (run.status === "completed") {
             clearInterval(deliverablePollRef.current);
             deliverablePollRef.current = null;
-            // Find the matching approval
             const approvals = await api.listApprovals({ client_id: clientId });
             const match = (approvals || []).find(
-              (a) => a.run_id === run.id && a.kind === "competitive_deliverable",
+              (a) => a.run_id === r.run_id && a.kind === "competitive_deliverable",
             );
             setGeneratingDeliverable(false);
             if (match) {
               toast.success("Deliverable ready — review & approve below");
-              // Go straight to the full deliverable view; user can approve from there
               navigate(`/clients/${clientId}/deliverables/competitive/${match.id}`);
             } else {
               toast.error("Run completed but no deliverable approval found");
             }
-          } else if (r.status === "failed") {
+            await loadComparison();
+            await loadPendingDeliverables();
+          } else if (run.status === "failed") {
             clearInterval(deliverablePollRef.current);
             deliverablePollRef.current = null;
             setGeneratingDeliverable(false);
-            toast.error(`Generation failed: ${r.error || "unknown error"}`);
+            toast.error(`Generation failed: ${run.error || "unknown error"}`);
           } else if (Date.now() - startedAt > 5 * 60 * 1000) {
             clearInterval(deliverablePollRef.current);
             deliverablePollRef.current = null;
@@ -148,7 +139,7 @@ export default function Competitors() {
       }, 3000);
     } catch (e) {
       setGeneratingDeliverable(false);
-      toast.error(e?.response?.data?.detail || "Failed to start generation");
+      toast.error(e?.response?.data?.detail || "Failed to start analysis");
     }
   };
 
@@ -199,10 +190,10 @@ export default function Competitors() {
           disabled={generatingDeliverable || !client?.competitors?.length}
           className="bg-emerald-400/90 text-zinc-950 hover:bg-emerald-300 rounded-sm"
           data-testid="generate-deliverable-btn"
-          title="Synthesize a client-ready competitive analysis report from your cached data"
+          title="One-click: refreshes metrics + ranked keywords, then synthesizes a client-ready competitive analysis report"
         >
           {generatingDeliverable ? <Loader2 size={13} className="mr-1.5 animate-spin" /> : <Sparkles size={13} className="mr-1.5" />}
-          {generatingDeliverable ? "Generating…" : "Generate Client Deliverable"}
+          {generatingDeliverable ? "Running analysis…" : "Run Competitive Analysis"}
         </Button>
       </PageHeader>
 

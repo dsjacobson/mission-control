@@ -133,6 +133,10 @@ export const api = {
     client.post(`/clients/${clientId}/metrics/refresh`).then((r) => r.data),
   refreshAllCompetitorMetrics: (clientId) =>
     client.post(`/clients/${clientId}/competitors/refresh-all`).then((r) => r.data),
+  runCompetitiveAnalysis: (clientId) =>
+    client.post(`/clients/${clientId}/competitive-analysis`).then((r) => r.data),
+  archiveDecidedApprovals: (clientId) =>
+    client.post(`/clients/${clientId}/approvals/archive-decided`).then((r) => r.data),
 
   // Competitor SF bridge crawl
   competitorSfBridgeCrawl: (clientId, competitorId, max_urls = 200) =>

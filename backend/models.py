@@ -118,6 +118,9 @@ class WorkflowRun(BaseModel):
     created_at: str = Field(default_factory=now_iso)
     started_at: Optional[str] = None
     completed_at: Optional[str] = None
+    # Server-computed: how many approvals from this run still need decisions
+    approvals_pending: int = 0
+    approvals_total: int = 0
 
 
 class RunCreate(BaseModel):

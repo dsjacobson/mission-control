@@ -263,6 +263,68 @@ async def refresh_all_competitor_metrics(client_id: str):
     }
 
 
+@api.post("/clients/{client_id}/competitive-analysis")
+async def run_competitive_analysis(client_id: str):
+    """One-click Competitive Analysis flow.
+
+    Pipeline (each step skipped if not needed):
+      1. Refresh metrics for client + every competitor (parallel)
+      2. Top-up ranked keywords for any competitor without cached ranked_keywords
+      3. Kick off the competitive_deliverable workflow
+
+    Returns immediately with `run_id`. Client polls the run; when complete,
+    a `competitive_deliverable` approval is in the queue. Polls the run.
+    """
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0})
+    if not client:
+        raise HTTPException(404, "Client not found")
+    if not (client.get("competitors") or []):
+        raise HTTPException(400, "Add at least one competitor first")
+    if not (semrush.is_configured() or dfs_lib.is_configured()):
+        raise HTTPException(400, "Neither Semrush nor DataForSEO is configured")
+
+    # 1) Refresh metrics for everyone (cheap, parallel)
+    import asyncio as _asyncio
+
+    metric_tasks = []
+    metric_tasks.append(competitors_enrich.refresh_client_metrics(db, client_id))
+    for c in client.get("competitors") or []:
+        if c.get("id"):
+            metric_tasks.append(competitors_enrich.refresh_metrics(db, client_id, c["id"]))
+    metric_outcomes = await _asyncio.gather(*metric_tasks, return_exceptions=True)
+    metric_failures = sum(1 for o in metric_outcomes if isinstance(o, Exception))
+
+    # 2) Top up ranked keywords for any competitor missing them (DataForSEO Labs)
+    kw_attempts = 0
+    if dfs_lib.is_configured():
+        for c in client.get("competitors") or []:
+            if not c.get("id"):
+                continue
+            existing = (c.get("ranked_keywords") or {}).get("items") or []
+            if existing:
+                continue
+            try:
+                await competitors_enrich.refresh_ranked_keywords(db, client_id, c["id"], limit=200)
+                kw_attempts += 1
+            except Exception:
+                pass
+
+    # 3) Kick off the deliverable workflow
+    rc = RunCreate(
+        client_id=client_id,
+        type="competitive_deliverable",
+        objective="Full client-facing competitive analysis (one-click)",
+    )
+    run = await create_run(rc)  # reuses POST /api/runs handler
+    return {
+        "ok": True,
+        "run_id": run.id,
+        "metrics_refreshed": len(metric_tasks) - metric_failures,
+        "metrics_failed": metric_failures,
+        "ranked_keywords_topped_up": kw_attempts,
+    }
+
+
 # ---------- Competitor SF bridge crawl ----------
 
 class CompetitorSfCrawlRequest(BaseModel):
@@ -409,10 +471,23 @@ async def create_run(payload: RunCreate):
     return run
 
 
+async def _annotate_run_with_approval_counts(run: dict) -> dict:
+    run_id = run.get("id")
+    if not run_id:
+        return run
+    total = await db.approvals.count_documents({"run_id": run_id})
+    pending = await db.approvals.count_documents({"run_id": run_id, "status": "pending"})
+    run["approvals_total"] = total
+    run["approvals_pending"] = pending
+    return run
+
+
 @api.get("/runs", response_model=List[WorkflowRun])
 async def list_runs(client_id: Optional[str] = Query(None), limit: int = 50):
     q = {"client_id": client_id} if client_id else {}
     docs = await db.runs.find(q, {"_id": 0}).sort("created_at", -1).to_list(limit)
+    for d in docs:
+        await _annotate_run_with_approval_counts(d)
     return docs
 
 
@@ -421,6 +496,7 @@ async def get_run(run_id: str):
     doc = await db.runs.find_one({"id": run_id}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Run not found")
+    await _annotate_run_with_approval_counts(doc)
     return doc
 
 
@@ -429,6 +505,8 @@ async def list_active_runs():
     docs = await db.runs.find(
         {"status": {"$in": ["queued", "running"]}}, {"_id": 0}
     ).sort("created_at", -1).to_list(50)
+    for d in docs:
+        await _annotate_run_with_approval_counts(d)
     return docs
 
 
@@ -464,7 +542,22 @@ async def decide_approval(approval_id: str, decision: ApprovalDecision):
     result = await db.approvals.update_one({"id": approval_id}, {"$set": update})
     if result.matched_count == 0:
         raise HTTPException(404, "Approval not found")
-    return await db.approvals.find_one({"id": approval_id}, {"_id": 0})
+    doc = await db.approvals.find_one({"id": approval_id}, {"_id": 0})
+
+    # Auto-execute on approval for executable kinds (technical_action, page_optimization, etc.)
+    if (
+        decision.status == "approved"
+        and executor.is_executable(doc.get("kind", ""))
+        and (doc.get("artifact_status") or "none") in ("none", "error")
+    ):
+        await db.approvals.update_one(
+            {"id": approval_id},
+            {"$set": {"artifact_status": "generating", "artifact_error": None, "progress": "in_progress"}},
+        )
+        executor.launch_execute(db, approval_id)
+        doc["artifact_status"] = "generating"
+        doc["progress"] = "in_progress"
+    return doc
 
 
 class BulkDecision(BaseModel):
@@ -490,7 +583,22 @@ async def bulk_decide_approvals(payload: BulkDecision):
         {"id": {"$in": payload.ids}, "status": "pending"},
         {"$set": update},
     )
-    return {"ok": True, "updated": result.modified_count}
+
+    # Auto-execute executable kinds in the batch
+    executed = 0
+    if payload.status == "approved":
+        async for doc in db.approvals.find(
+            {"id": {"$in": payload.ids}, "status": "approved"},
+            {"_id": 0, "id": 1, "kind": 1, "artifact_status": 1},
+        ):
+            if executor.is_executable(doc.get("kind", "")) and (doc.get("artifact_status") or "none") in ("none", "error"):
+                await db.approvals.update_one(
+                    {"id": doc["id"]},
+                    {"$set": {"artifact_status": "generating", "artifact_error": None, "progress": "in_progress"}},
+                )
+                executor.launch_execute(db, doc["id"])
+                executed += 1
+    return {"ok": True, "updated": result.modified_count, "executed": executed}
 
 
 @api.delete("/approvals/{approval_id}")
@@ -511,6 +619,18 @@ async def bulk_delete_approvals(payload: BulkDelete):
         raise HTTPException(400, "No approval ids provided")
     result = await db.approvals.delete_many({"id": {"$in": payload.ids}})
     return {"ok": True, "deleted": result.deleted_count}
+
+
+@api.post("/clients/{client_id}/approvals/archive-decided")
+async def archive_decided_approvals(client_id: str):
+    """Bulk-archive every approved or rejected approval for the client.
+    Approved items get progress=archived; rejected stays as-is (already terminal).
+    Used by the 'Reset queue' button so the user can clear historic noise."""
+    result = await db.approvals.update_many(
+        {"client_id": client_id, "status": "approved", "progress": {"$ne": "archived"}},
+        {"$set": {"progress": "archived", "progress_updated_at": now_iso()}},
+    )
+    return {"ok": True, "archived": result.modified_count}
 
 
 @api.post("/approvals/{approval_id}/progress", response_model=Approval)

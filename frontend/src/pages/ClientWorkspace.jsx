@@ -1,16 +1,20 @@
 import React, { useEffect, useState } from "react";
-import { useParams, Link } from "react-router-dom";
-import { Globe, Target, Plug, Workflow, ArrowUpRight, ListChecks } from "lucide-react";
+import { useParams, Link, useNavigate } from "react-router-dom";
+import { Globe, Target, Plug, Workflow, ArrowUpRight, ListChecks, Sparkles, Loader2 } from "lucide-react";
 import api from "../lib/api";
 import { PageHeader, Section, StatTile, EmptyState, StatusBadge, formatRelative, WorkflowTypeLabel } from "../components/Bits";
 import { useClients } from "../lib/ClientContext";
+import { Button } from "../components/ui/button";
+import { toast } from "sonner";
 
 export default function ClientWorkspace() {
   const { clientId } = useParams();
-  const { activeClient, setActiveClientId, refresh } = useClients();
+  const navigate = useNavigate();
+  const { activeClient, setActiveClientId } = useClients();
   const [runs, setRuns] = useState([]);
   const [approvalsCount, setApprovalsCount] = useState(0);
   const [deliverablesCount, setDeliverablesCount] = useState(0);
+  const [busyCompetitive, setBusyCompetitive] = useState(false);
 
   useEffect(() => {
     setActiveClientId(clientId);
@@ -56,8 +60,42 @@ export default function ClientWorkspace() {
       ].filter(Boolean).length
     : 0;
 
-  const completedRuns = runs.filter((r) => r.status === "completed").length;
+  const completedRuns = runs.filter((r) => r.status === "completed" && (r.approvals_pending || 0) === 0).length;
   const activeRunsCount = runs.filter((r) => ["running", "queued"].includes(r.status)).length;
+  const awaitingReview = runs.filter((r) => r.status === "completed" && (r.approvals_pending || 0) > 0).length;
+
+  const runCompetitive = async () => {
+    if (!(client?.competitors || []).length) {
+      toast.error("Add at least one competitor first");
+      return;
+    }
+    setBusyCompetitive(true);
+    try {
+      const r = await api.runCompetitiveAnalysis(clientId);
+      toast.success("Analysis started — you'll see the deliverable when it's ready");
+      // Poll the run and open the deliverable when done
+      const start = Date.now();
+      const poll = setInterval(async () => {
+        try {
+          const run = await api.getRun(r.run_id);
+          if (run.status === "completed") {
+            clearInterval(poll);
+            const aps = await api.listApprovals({ client_id: clientId });
+            const match = (aps || []).find((a) => a.run_id === r.run_id && a.kind === "competitive_deliverable");
+            setBusyCompetitive(false);
+            if (match) navigate(`/clients/${clientId}/deliverables/competitive/${match.id}`);
+          } else if (run.status === "failed" || Date.now() - start > 5 * 60 * 1000) {
+            clearInterval(poll);
+            setBusyCompetitive(false);
+            if (run.status === "failed") toast.error(`Failed: ${run.error || "unknown"}`);
+          }
+        } catch {}
+      }, 3000);
+    } catch (e) {
+      setBusyCompetitive(false);
+      toast.error(e?.response?.data?.detail || "Failed to start");
+    }
+  };
 
   return (
     <div data-testid="client-workspace-page">
@@ -66,22 +104,32 @@ export default function ClientWorkspace() {
         title={client?.name || "Client"}
         description={client?.goals || "No goals set yet. Add goals from the integration page to focus agent reasoning."}
       >
+        <Button
+          onClick={runCompetitive}
+          disabled={busyCompetitive || !(client?.competitors || []).length}
+          className="bg-emerald-400/90 text-zinc-950 hover:bg-emerald-300 rounded-sm h-9"
+          data-testid="workspace-run-competitive"
+          title="One-click: refresh metrics + ranked keywords, then synthesize a client-ready competitive deliverable"
+        >
+          {busyCompetitive ? <Loader2 size={13} className="mr-1.5 animate-spin" /> : <Sparkles size={13} className="mr-1.5" />}
+          {busyCompetitive ? "Running…" : "Run Competitive Analysis"}
+        </Button>
         <Link
           to={`/clients/${clientId}/workflows`}
           data-testid="goto-workflows"
-          className="inline-flex items-center gap-1.5 bg-zinc-50 text-zinc-950 hover:bg-zinc-200 rounded-sm h-9 px-3 text-sm font-medium transition-colors"
+          className="inline-flex items-center gap-1.5 bg-zinc-900 border border-zinc-800 text-zinc-100 hover:bg-zinc-800 rounded-sm h-9 px-3 text-sm font-medium transition-colors"
         >
-          <Workflow size={14} /> Launch workflow
+          <Workflow size={14} /> All workflows
         </Link>
       </PageHeader>
 
       <Section title="Snapshot" testId="client-snapshot">
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
           <StatTile testId="cs-active" label="Active runs" value={activeRunsCount} tone={activeRunsCount > 0 ? "success" : "neutral"} />
-          <StatTile testId="cs-completed" label="Completed" value={completedRuns} />
+          <StatTile testId="cs-awaiting" label="Awaiting review" value={awaitingReview} tone={awaitingReview > 0 ? "warning" : "neutral"} hint="finished — needs your approval" />
+          <StatTile testId="cs-completed" label="Done" value={completedRuns} hint="fully decided" />
           <StatTile testId="cs-pending" label="Pending approvals" value={approvalsCount} tone={approvalsCount > 0 ? "warning" : "neutral"} />
-          <StatTile testId="cs-deliverables" label="Deliverables" value={deliverablesCount} hint="approved, in your backlog" />
-          <StatTile testId="cs-integrations" label="Integrations" value={`${integrationsConnected}/6`} hint="connectors configured" />
+          <StatTile testId="cs-deliverables" label="Deliverables" value={deliverablesCount} hint="approved" />
         </div>
       </Section>
 
@@ -159,22 +207,33 @@ export default function ClientWorkspace() {
                 </tr>
               </thead>
               <tbody>
-                {runs.map((r) => (
-                  <tr key={r.id} className="border-b border-zinc-800/50 hover:bg-zinc-900/60 transition-colors duration-150">
-                    <td className="px-4 py-3 text-zinc-200 font-medium"><WorkflowTypeLabel type={r.type} /></td>
-                    <td className="px-4 py-3"><StatusBadge status={r.status} /></td>
-                    <td className="px-4 py-3 text-zinc-500 font-mono text-xs">{formatRelative(r.created_at)}</td>
-                    <td className="px-4 py-3 text-right">
-                      <Link
-                        to={`/runs/${r.id}`}
-                        data-testid={`open-client-run-${r.id}`}
-                        className="inline-flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-100"
-                      >
-                        Open <ArrowUpRight size={12} />
-                      </Link>
-                    </td>
-                  </tr>
-                ))}
+                {runs.map((r) => {
+                  const isAwaitingReview = r.status === "completed" && (r.approvals_pending || 0) > 0;
+                  return (
+                    <tr key={r.id} className="border-b border-zinc-800/50 hover:bg-zinc-900/60 transition-colors duration-150">
+                      <td className="px-4 py-3 text-zinc-200 font-medium"><WorkflowTypeLabel type={r.type} /></td>
+                      <td className="px-4 py-3">
+                        {isAwaitingReview ? (
+                          <span className="inline-flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded-sm border border-amber-400/30 bg-amber-400/10 text-amber-300" data-testid={`run-status-${r.id}`}>
+                            <ListChecks size={10} /> awaiting review · {r.approvals_pending}
+                          </span>
+                        ) : (
+                          <StatusBadge status={r.status} />
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-zinc-500 font-mono text-xs">{formatRelative(r.created_at)}</td>
+                      <td className="px-4 py-3 text-right">
+                        <Link
+                          to={`/runs/${r.id}`}
+                          data-testid={`open-client-run-${r.id}`}
+                          className="inline-flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-100"
+                        >
+                          Open <ArrowUpRight size={12} />
+                        </Link>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
