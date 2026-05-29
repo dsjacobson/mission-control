@@ -331,7 +331,7 @@ export default function Approvals() {
                     <DialogDescription className="sr-only">Review and approve the deliverable.</DialogDescription>
                   </div>
                   <div className="overflow-y-auto max-h-[65vh]">
-                    <CompetitiveDeliverableView content={selected.content} />
+                    <CompetitiveDeliverableView content={selected.content} approvalId={selected.id} />
                   </div>
                   <div className="px-6 py-3 border-t border-zinc-800 flex items-center gap-2">
                     <Link

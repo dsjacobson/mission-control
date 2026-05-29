@@ -137,6 +137,9 @@ export const api = {
     client.post(`/clients/${clientId}/competitive-analysis`).then((r) => r.data),
   archiveDecidedApprovals: (clientId) =>
     client.post(`/clients/${clientId}/approvals/archive-decided`).then((r) => r.data),
+  // Deliverable exports (open natively in Google Docs / Google Sheets via upload)
+  deliverableDocxUrl: (approvalId) => `${API}/approvals/${approvalId}/export/docx`,
+  deliverableXlsxUrl: (approvalId) => `${API}/approvals/${approvalId}/export/xlsx`,
 
   // Competitor SF bridge crawl
   competitorSfBridgeCrawl: (clientId, competitorId, max_urls = 200) =>

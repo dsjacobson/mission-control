@@ -9,7 +9,17 @@
   body, html, #root, .App { background: white !important; }
   /* Section breaks */
   .competitive-deliverable section { break-inside: avoid; }
-  .competitive-deliverable { font-size: 11pt; }
+  .competitive-deliverable {
+    font-size: 10.5pt;
+    color: #1e293b !important;
+    background: white !important;
+  }
+  /* Hide entire screen-only elements that shouldn't print (e.g. pending banner) */
+  [data-testid="pending-banner"] { display: none !important; }
   /* Tighten margins */
-  @page { margin: 16mm 14mm; }
+  @page { margin: 16mm 16mm; }
+  /* Print color overrides — warm consultancy palette */
+  .competitive-deliverable h1,
+  .competitive-deliverable h2,
+  .competitive-deliverable h3 { color: #0f172a !important; }
 }

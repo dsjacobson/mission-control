@@ -8,7 +8,7 @@ from typing import List, Optional, Dict, Any
 
 from dotenv import load_dotenv
 from fastapi import APIRouter, FastAPI, HTTPException, Query, UploadFile, File
-from fastapi.responses import RedirectResponse, FileResponse
+from fastapi.responses import RedirectResponse, FileResponse, Response
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel
 from starlette.middleware.cors import CORSMiddleware
@@ -34,6 +34,7 @@ import ga
 import screamingfrog
 import semrush_csv
 import semrush
+import deliverable_exports
 import sf_bridge
 import executor
 import keyword_map as kw_map_lib
@@ -631,6 +632,51 @@ async def archive_decided_approvals(client_id: str):
         {"$set": {"progress": "archived", "progress_updated_at": now_iso()}},
     )
     return {"ok": True, "archived": result.modified_count}
+
+
+# ---------- Deliverable exports (DOCX / XLSX) ----------
+
+def _safe_filename(s: str, ext: str) -> str:
+    import re
+    base = re.sub(r"[^a-zA-Z0-9_-]+", "-", (s or "deliverable").strip().lower()).strip("-") or "deliverable"
+    return f"{base[:60]}.{ext}"
+
+
+async def _load_competitive_approval(approval_id: str) -> dict:
+    doc = await db.approvals.find_one({"id": approval_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Approval not found")
+    if doc.get("kind") != "competitive_deliverable":
+        raise HTTPException(400, "This export is only available for competitive_deliverable approvals")
+    return doc
+
+
+@api.get("/approvals/{approval_id}/export/docx")
+async def export_approval_docx(approval_id: str):
+    doc = await _load_competitive_approval(approval_id)
+    data = deliverable_exports.build_competitive_docx(
+        doc.get("content") or {}, client_name=doc.get("client_name") or "",
+    )
+    fname = _safe_filename(f"{doc.get('client_name','client')}-competitive-analysis", "docx")
+    return Response(
+        content=data,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+@api.get("/approvals/{approval_id}/export/xlsx")
+async def export_approval_xlsx(approval_id: str):
+    doc = await _load_competitive_approval(approval_id)
+    data = deliverable_exports.build_competitive_xlsx(
+        doc.get("content") or {}, client_name=doc.get("client_name") or "",
+    )
+    fname = _safe_filename(f"{doc.get('client_name','client')}-competitive-analysis", "xlsx")
+    return Response(
+        content=data,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
 
 
 @api.post("/approvals/{approval_id}/progress", response_model=Approval)

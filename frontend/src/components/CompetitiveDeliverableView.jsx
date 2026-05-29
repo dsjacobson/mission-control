@@ -1,51 +1,84 @@
 import React from "react";
-import { Printer, Sparkles, Target, TrendingUp, Link2, FileText, Calendar, BarChart3, ChevronRight, ExternalLink } from "lucide-react";
+import { Printer, Sparkles, Target, TrendingUp, Link2, FileText, Calendar, BarChart3, ChevronRight, ExternalLink, FileType, Sheet, Download } from "lucide-react";
+import api from "../lib/api";
 
 /**
  * Renders a Competitive Analysis deliverable.
- * Print-friendly (uses .print-only / .no-print classes + Tailwind print: utilities).
+ * Dark editorial palette in app; warm print/PDF palette via Tailwind print:.
+ * Exports: DOCX (Google Docs / Word) + XLSX (Google Sheets / Excel) + PDF.
  */
-export default function CompetitiveDeliverableView({ content, onPrint }) {
+export default function CompetitiveDeliverableView({ content, onPrint, approvalId }) {
   if (!content || typeof content !== "object") {
     return <div className="p-6 text-sm text-zinc-500">No deliverable content yet.</div>;
   }
   const c = content;
+  const docxUrl = approvalId ? api.deliverableDocxUrl(approvalId) : null;
+  const xlsxUrl = approvalId ? api.deliverableXlsxUrl(approvalId) : null;
 
   return (
     <div className="competitive-deliverable bg-zinc-950 text-zinc-100 print:bg-white print:text-zinc-900" data-testid="competitive-deliverable">
       {/* Header / cover */}
-      <div className="px-8 py-10 border-b border-zinc-800 print:border-zinc-300">
-        <div className="flex items-start justify-between gap-6">
+      <div className="px-10 py-12 border-b border-zinc-800 print:border-zinc-300 print:px-0 print:py-6">
+        <div className="flex items-start justify-between gap-8 flex-wrap">
           <div className="flex-1 min-w-0">
-            <div className="text-[10px] font-mono uppercase tracking-[0.25em] text-emerald-400 print:text-emerald-700 mb-3">
-              Competitive Analysis Deliverable
+            <div className="text-[10px] font-mono uppercase tracking-[0.3em] text-amber-400 print:text-amber-700 mb-4">
+              ◆ Competitive Analysis · Deliverable
             </div>
-            <h1 className="font-heading text-3xl md:text-4xl font-semibold tracking-tight text-zinc-50 print:text-zinc-900">
+            <h1 className="font-serif text-4xl md:text-5xl font-semibold tracking-tight text-zinc-50 print:text-slate-900 leading-[1.05]">
               {c.title || "Competitive Analysis"}
             </h1>
             {c.subtitle && (
-              <p className="text-base text-zinc-400 print:text-zinc-700 mt-2 max-w-2xl">{c.subtitle}</p>
+              <p className="font-serif text-lg italic text-zinc-300 print:text-slate-700 mt-4 max-w-2xl leading-snug">
+                {c.subtitle}
+              </p>
             )}
-            <div className="text-xs font-mono text-zinc-500 mt-3">
-              Prepared for {c.prepared_for || "client"}
+            <div className="text-[11px] font-mono uppercase tracking-wider text-zinc-500 print:text-slate-500 mt-5">
+              Prepared for · <span className="text-zinc-200 print:text-slate-800">{c.prepared_for || "client"}</span>
             </div>
           </div>
-          {onPrint && (
-            <button
-              onClick={onPrint}
-              className="no-print inline-flex items-center gap-1.5 text-xs text-zinc-300 hover:text-zinc-100 border border-zinc-800 hover:border-zinc-700 px-3 py-1.5 rounded-sm"
-              data-testid="print-deliverable-btn"
-            >
-              <Printer size={12} /> Print / save PDF
-            </button>
-          )}
+          <div className="no-print flex flex-col gap-2 shrink-0">
+            {docxUrl && (
+              <a
+                href={docxUrl}
+                className="inline-flex items-center gap-2 text-xs px-3 py-2 bg-zinc-50 text-zinc-950 hover:bg-zinc-200 rounded-sm font-medium transition-colors min-w-[180px]"
+                data-testid="export-docx-btn"
+                download
+              >
+                <FileType size={13} />
+                <span className="flex-1">Google Docs / Word</span>
+                <Download size={11} />
+              </a>
+            )}
+            {xlsxUrl && (
+              <a
+                href={xlsxUrl}
+                className="inline-flex items-center gap-2 text-xs px-3 py-2 bg-zinc-900 border border-zinc-800 text-zinc-100 hover:bg-zinc-800 rounded-sm font-medium min-w-[180px]"
+                data-testid="export-xlsx-btn"
+                download
+              >
+                <Sheet size={13} />
+                <span className="flex-1">Google Sheets / Excel</span>
+                <Download size={11} />
+              </a>
+            )}
+            {onPrint && (
+              <button
+                onClick={onPrint}
+                className="inline-flex items-center gap-2 text-xs px-3 py-2 bg-zinc-900 border border-zinc-800 text-zinc-100 hover:bg-zinc-800 rounded-sm font-medium min-w-[180px]"
+                data-testid="print-deliverable-btn"
+              >
+                <Printer size={13} />
+                <span className="flex-1">Print / save PDF</span>
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
       {/* Executive summary */}
       {c.executive_summary && (
         <Section icon={Sparkles} title="Executive Summary">
-          <p className="text-sm leading-relaxed text-zinc-200 print:text-zinc-800 max-w-3xl">
+          <p className="font-serif text-base md:text-[17px] leading-relaxed text-zinc-100 print:text-slate-800 max-w-3xl">
             {c.executive_summary}
           </p>
         </Section>
@@ -265,9 +298,13 @@ export default function CompetitiveDeliverableView({ content, onPrint }) {
 
       {/* Closing */}
       {c.closing_statement && (
-        <div className="px-8 py-10 border-t border-zinc-800 print:border-zinc-300 bg-zinc-900/40 print:bg-zinc-50">
-          <div className="text-[10px] font-mono uppercase tracking-[0.25em] text-emerald-400 print:text-emerald-700 mb-3">Start this week</div>
-          <p className="text-base text-zinc-100 print:text-zinc-900 max-w-3xl leading-relaxed">{c.closing_statement}</p>
+        <div className="px-10 py-10 border-t border-zinc-800 print:border-slate-300 bg-zinc-900/60 print:bg-amber-50/40 print:px-0 print:py-6">
+          <div className="text-[10px] font-mono uppercase tracking-[0.3em] text-amber-400 print:text-amber-700 mb-4">
+            ◆ Start this week
+          </div>
+          <p className="font-serif text-xl text-zinc-100 print:text-slate-900 max-w-3xl leading-snug italic">
+            {c.closing_statement}
+          </p>
         </div>
       )}
     </div>
@@ -276,12 +313,12 @@ export default function CompetitiveDeliverableView({ content, onPrint }) {
 
 function Section({ icon: Icon, title, subtitle, children }) {
   return (
-    <section className="px-8 py-7 border-b border-zinc-800 print:border-zinc-300 print:break-inside-avoid">
-      <div className="flex items-center gap-2 mb-5">
-        {Icon && <Icon size={15} className="text-emerald-400 print:text-emerald-700" />}
-        <h2 className="font-heading text-lg md:text-xl font-medium text-zinc-50 print:text-zinc-900">{title}</h2>
+    <section className="px-10 py-9 border-b border-zinc-800 print:border-zinc-300 print:break-inside-avoid print:px-0 print:py-5">
+      <div className="flex items-center gap-3 mb-6">
+        {Icon && <Icon size={16} className="text-amber-400 print:text-amber-700" />}
+        <h2 className="font-serif text-2xl md:text-[28px] font-semibold tracking-tight text-zinc-50 print:text-slate-900">{title}</h2>
       </div>
-      {subtitle && <p className="text-xs text-zinc-500 print:text-zinc-600 -mt-3 mb-4">{subtitle}</p>}
+      {subtitle && <p className="text-xs italic text-zinc-500 print:text-slate-600 -mt-4 mb-5 font-serif">{subtitle}</p>}
       {children}
     </section>
   );

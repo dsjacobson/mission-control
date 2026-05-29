@@ -129,7 +129,7 @@ export default function CompetitiveDeliverable() {
         </div>
       )}
 
-      <CompetitiveDeliverableView content={approval.content} onPrint={onPrint} />
+      <CompetitiveDeliverableView content={approval.content} onPrint={onPrint} approvalId={approval.id} />
     </div>
   );
 }
