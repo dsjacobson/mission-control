@@ -18,6 +18,7 @@ import {
 } from "../components/ui/dialog";
 import { toast } from "sonner";
 import CompetitiveDeliverableView from "../components/CompetitiveDeliverableView";
+import { ExportButtons } from "../components/ExportButtons";
 
 const KIND_LABEL = {
   content_brief: "Content brief",
@@ -375,6 +376,9 @@ export default function Approvals() {
                 <DialogDescription className="sr-only">
                   Review approval content and approve or reject it.
                 </DialogDescription>
+                <div className="pt-2">
+                  <ExportButtons approvalId={selected.id} testIdSuffix="dialog" />
+                </div>
               </DialogHeader>
               <div className="max-h-[55vh] overflow-y-auto pr-1">
                 <pre

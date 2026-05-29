@@ -642,22 +642,29 @@ def _safe_filename(s: str, ext: str) -> str:
     return f"{base[:60]}.{ext}"
 
 
-async def _load_competitive_approval(approval_id: str) -> dict:
+async def _load_approval(approval_id: str) -> dict:
     doc = await db.approvals.find_one({"id": approval_id}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Approval not found")
-    if doc.get("kind") != "competitive_deliverable":
-        raise HTTPException(400, "This export is only available for competitive_deliverable approvals")
     return doc
 
 
 @api.get("/approvals/{approval_id}/export/docx")
 async def export_approval_docx(approval_id: str):
-    doc = await _load_competitive_approval(approval_id)
-    data = deliverable_exports.build_competitive_docx(
-        doc.get("content") or {}, client_name=doc.get("client_name") or "",
-    )
-    fname = _safe_filename(f"{doc.get('client_name','client')}-competitive-analysis", "docx")
+    doc = await _load_approval(approval_id)
+    kind = doc.get("kind") or ""
+    content = doc.get("content") or {}
+    if kind == "competitive_deliverable":
+        data = deliverable_exports.build_competitive_docx(content, client_name=doc.get("client_name") or "")
+    else:
+        data = deliverable_exports.build_generic_docx(
+            content,
+            kind=kind,
+            title=doc.get("title") or "",
+            client_name=doc.get("client_name") or "",
+            summary=doc.get("summary") or "",
+        )
+    fname = _safe_filename(f"{doc.get('client_name','client')}-{kind}", "docx")
     return Response(
         content=data,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -667,11 +674,19 @@ async def export_approval_docx(approval_id: str):
 
 @api.get("/approvals/{approval_id}/export/xlsx")
 async def export_approval_xlsx(approval_id: str):
-    doc = await _load_competitive_approval(approval_id)
-    data = deliverable_exports.build_competitive_xlsx(
-        doc.get("content") or {}, client_name=doc.get("client_name") or "",
-    )
-    fname = _safe_filename(f"{doc.get('client_name','client')}-competitive-analysis", "xlsx")
+    doc = await _load_approval(approval_id)
+    kind = doc.get("kind") or ""
+    content = doc.get("content") or {}
+    if kind == "competitive_deliverable":
+        data = deliverable_exports.build_competitive_xlsx(content, client_name=doc.get("client_name") or "")
+    else:
+        data = deliverable_exports.build_generic_xlsx(
+            content,
+            kind=kind,
+            title=doc.get("title") or "",
+            client_name=doc.get("client_name") or "",
+        )
+    fname = _safe_filename(f"{doc.get('client_name','client')}-{kind}", "xlsx")
     return Response(
         content=data,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

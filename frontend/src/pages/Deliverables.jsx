@@ -21,6 +21,7 @@ import { Button } from "../components/ui/button";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/tabs";
 import { toast } from "sonner";
 import PageOptimizationCard from "../components/PageOptimizationCard";
+import { ExportButtons } from "../components/ExportButtons";
 
 const KIND_META = {
   content_brief: { label: "Content briefs", icon: FileText, tone: "text-emerald-400" },
@@ -286,7 +287,7 @@ function DeliverableCard({ item, kind, busy, onProgress, onCopy, onDownload }) {
         </div>
       </div>
 
-      <div className="mt-3 flex items-center gap-1 text-[11px]">
+      <div className="mt-3 flex items-center gap-2 flex-wrap text-[11px]">
         <span className="text-zinc-500 font-mono uppercase tracking-wider mr-1">Move to:</span>
         {["open", "in_progress", "done", "archived"].map((state) => (
           <button
@@ -304,6 +305,7 @@ function DeliverableCard({ item, kind, busy, onProgress, onCopy, onDownload }) {
             {PROGRESS_TONES[state].label}
           </button>
         ))}
+        <div className="ml-auto"><ExportButtons approvalId={item.id} testIdSuffix={item.id} /></div>
       </div>
     </div>
   );

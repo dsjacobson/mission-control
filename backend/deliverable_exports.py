@@ -557,3 +557,287 @@ def build_competitive_xlsx(content: Dict[str, Any], client_name: str = "") -> by
     buf = BytesIO()
     wb.save(buf)
     return buf.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# Generic exporter — handles any approval kind by walking the content shape.
+# Used for content_brief, strategy_doc, technical_action, page_optimization,
+# competitor_insight, wordpress_draft. The competitive_deliverable kind has
+# its own bespoke exporters above.
+# ---------------------------------------------------------------------------
+
+KIND_LABEL = {
+    "content_brief": "Content Brief",
+    "technical_action": "Technical Action",
+    "strategy_doc": "Strategy",
+    "competitor_insight": "Competitor Insight",
+    "page_optimization": "Page Optimization",
+    "wordpress_draft": "WordPress Draft",
+}
+
+# Friendlier titles for known field names
+FIELD_LABELS = {
+    "title": "Title",
+    "primary_keyword": "Primary keyword",
+    "supporting_keywords": "Supporting keywords",
+    "search_intent": "Search intent",
+    "outline": "Outline",
+    "word_count_target": "Target word count",
+    "internal_links": "Internal links",
+    "external_links": "External links",
+    "schema": "Schema",
+    "schema_notes": "Schema notes",
+    "url": "URL",
+    "target_keyword": "Target keyword",
+    "current_title": "Current title",
+    "current_meta": "Current meta description",
+    "current_h1": "Current H1",
+    "proposed_title": "Proposed title",
+    "proposed_meta": "Proposed meta description",
+    "proposed_h1": "Proposed H1",
+    "title_char_count": "Title characters",
+    "meta_char_count": "Meta characters",
+    "gsc_clicks": "GSC clicks (last 28d)",
+    "gsc_impressions": "GSC impressions",
+    "rationale": "Rationale",
+    "recommended_fix": "Recommended fix",
+    "expected_outcome": "Expected outcome",
+    "description": "Description",
+    "category": "Category",
+    "impact": "Impact (1-5)",
+    "effort": "Effort (1-5)",
+    "priority": "Priority",
+    "executive_summary": "Executive Summary",
+    "recommendations": "Recommendations",
+    "weekly_plan": "Weekly Plan",
+    "monthly_themes": "Monthly Themes",
+    "campaign_ideas": "Campaign Ideas",
+    "opportunity": "Opportunity",
+    "summary": "Summary",
+    "key_findings": "Key Findings",
+    "next_steps": "Next Steps",
+}
+
+
+def _label_for(key: str) -> str:
+    return FIELD_LABELS.get(key, key.replace("_", " ").strip().capitalize())
+
+
+def _is_short_scalar(v: Any) -> bool:
+    if v is None:
+        return True
+    if isinstance(v, (int, float, bool)):
+        return True
+    if isinstance(v, str):
+        return len(v) <= 80
+    return False
+
+
+def _docx_render_value(doc: Document, value: Any, depth: int = 0) -> None:
+    """Render a value tree into the docx in a clean editorial style."""
+    if value is None or value == "":
+        _add_body(doc, "—", color=MUTED, italic=True, size=9)
+        return
+    if isinstance(value, str):
+        _add_body(doc, value)
+        return
+    if isinstance(value, (int, float, bool)):
+        _add_body(doc, str(value))
+        return
+    if isinstance(value, list):
+        if not value:
+            _add_body(doc, "—", color=MUTED, italic=True, size=9)
+            return
+        if all(isinstance(v, str) for v in value):
+            for s in value:
+                _add_bullet(doc, s)
+            return
+        if all(isinstance(v, dict) for v in value):
+            # Render each dict as a labeled sub-block
+            for i, item in enumerate(value, 1):
+                # Pick a likely heading
+                heading = item.get("title") or item.get("name") or item.get("task") or item.get("keyword") or item.get("url") or f"Item {i}"
+                _add_heading(doc, f"{i}. {heading}", 3)
+                for k, v in item.items():
+                    if k in ("title", "name") and v == heading:
+                        continue
+                    if _is_short_scalar(v):
+                        _add_label_value(doc, _label_for(k), str(v) if v is not None else "—")
+                    elif isinstance(v, str):
+                        _add_body(doc, v, size=10)
+                    else:
+                        _add_kicker(doc, _label_for(k))
+                        _docx_render_value(doc, v, depth + 1)
+            return
+        # Mixed array
+        for v in value:
+            _docx_render_value(doc, v, depth + 1)
+        return
+    if isinstance(value, dict):
+        for k, v in value.items():
+            if _is_short_scalar(v):
+                _add_label_value(doc, _label_for(k), str(v) if v is not None else "—")
+            elif isinstance(v, str):
+                _add_kicker(doc, _label_for(k))
+                _add_body(doc, v)
+            else:
+                _add_heading(doc, _label_for(k), 3)
+                _docx_render_value(doc, v, depth + 1)
+        return
+
+
+def build_generic_docx(content: Dict[str, Any], kind: str, title: str = "", client_name: str = "", summary: str = "") -> bytes:
+    doc = Document()
+    for s in doc.sections:
+        s.top_margin = Cm(2.0)
+        s.bottom_margin = Cm(2.0)
+        s.left_margin = Cm(2.2)
+        s.right_margin = Cm(2.2)
+
+    style = doc.styles["Normal"]
+    style.font.name = "Calibri"
+    style.font.size = Pt(10)
+    style.font.color.rgb = CHARCOAL
+
+    # Cover
+    _add_kicker(doc, f"{KIND_LABEL.get(kind, kind.replace('_',' ').title())} · Deliverable")
+    title_p = doc.add_paragraph()
+    title_p.paragraph_format.space_after = Pt(6)
+    title_run = title_p.add_run(title or content.get("title") or KIND_LABEL.get(kind, kind))
+    title_run.bold = True
+    title_run.font.name = "Calibri"
+    title_run.font.size = Pt(22)
+    title_run.font.color.rgb = NAVY
+    if summary:
+        _add_body(doc, summary, color=SLATE, italic=True, size=10)
+    if client_name:
+        _add_body(doc, f"Prepared for {client_name}", color=MUTED, italic=True, size=9)
+
+    if not isinstance(content, dict):
+        _add_body(doc, str(content))
+    else:
+        # Order: title-like + summary-like first, then the rest.
+        priority_keys = ["executive_summary", "summary", "opportunity", "description", "rationale"]
+        seen = set()
+        # Skip raw `title` since we already used it for the cover
+        for k in priority_keys:
+            if k in content and k not in seen:
+                seen.add(k)
+                v = content[k]
+                if isinstance(v, str) and v:
+                    _add_heading(doc, _label_for(k), 1)
+                    _add_body(doc, v, size=11)
+        for k, v in content.items():
+            if k == "title" or k in seen:
+                continue
+            seen.add(k)
+            if isinstance(v, str) and v:
+                _add_heading(doc, _label_for(k), 1)
+                _add_body(doc, v, size=11)
+            elif isinstance(v, (int, float, bool)):
+                _add_label_value(doc, _label_for(k), str(v))
+            elif isinstance(v, list) and v:
+                _add_heading(doc, _label_for(k), 1)
+                _docx_render_value(doc, v)
+            elif isinstance(v, dict) and v:
+                _add_heading(doc, _label_for(k), 1)
+                _docx_render_value(doc, v)
+
+    buf = BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
+def build_generic_xlsx(content: Dict[str, Any], kind: str, title: str = "", client_name: str = "") -> bytes:
+    wb = Workbook()
+    overview = wb.active
+    overview.title = "Overview"
+
+    HEADER_FONT = Font(name="Calibri", size=11, bold=True, color="0F172A")
+    HEADER_FILL = PatternFill("solid", fgColor=LIGHT_BG)
+    TITLE_FONT = Font(name="Calibri", size=18, bold=True, color="0F172A")
+    SUBTITLE_FONT = Font(name="Calibri", size=10, color="475569", italic=True)
+    BODY = Font(name="Calibri", size=10, color="1E293B")
+    LABEL = Font(name="Calibri", size=10, bold=True, color="475569")
+    BORDER = Border(*[Side(style="thin", color=DIVIDER)] * 4)
+    WRAP = Alignment(wrap_text=True, vertical="top")
+
+    overview["A1"] = title or content.get("title") or KIND_LABEL.get(kind, kind)
+    overview["A1"].font = TITLE_FONT
+    overview.merge_cells("A1:D1")
+    overview["A2"] = f"{KIND_LABEL.get(kind, kind)} · prepared for {client_name}".strip(" ·")
+    overview["A2"].font = SUBTITLE_FONT
+    overview.merge_cells("A2:D2")
+
+    # Walk dict — scalar/short fields → rows in Overview; lists-of-dicts → new sheets
+    overview.column_dimensions["A"].width = 28
+    overview.column_dimensions["B"].width = 92
+    row = 4
+
+    def write_kv(k, v):
+        nonlocal row
+        c = overview.cell(row=row, column=1, value=_label_for(k))
+        c.font = LABEL
+        c.border = BORDER
+        c.alignment = WRAP
+        c2 = overview.cell(row=row, column=2, value=str(v) if v is not None else "—")
+        c2.font = BODY
+        c2.border = BORDER
+        c2.alignment = WRAP
+        # Auto-grow row height for long content
+        if isinstance(v, str) and len(v) > 80:
+            overview.row_dimensions[row].height = min(120, 18 + len(v) // 8)
+        row += 1
+
+    if not isinstance(content, dict):
+        write_kv("Content", content)
+    else:
+        for k, v in content.items():
+            if k == "title":
+                continue
+            if v is None or v == "":
+                continue
+            if isinstance(v, (str, int, float, bool)):
+                write_kv(k, v)
+            elif isinstance(v, list) and v and all(isinstance(x, str) for x in v):
+                write_kv(k, "\n• " + "\n• ".join(v))
+            elif isinstance(v, dict) and v:
+                # Inline dicts as key: value lines
+                lines = [f"{_label_for(kk)}: {vv}" for kk, vv in v.items() if isinstance(vv, (str, int, float, bool))]
+                if lines:
+                    write_kv(k, "\n".join(lines))
+            elif isinstance(v, list) and v and all(isinstance(x, dict) for x in v):
+                # Each list-of-dicts becomes its own sheet
+                sheet_name = _label_for(k)[:31]
+                ws = wb.create_sheet(sheet_name)
+                cols = []
+                for item in v:
+                    for kk in item.keys():
+                        if kk not in cols:
+                            cols.append(kk)
+                for i, kk in enumerate(cols):
+                    c = ws.cell(row=1, column=i + 1, value=_label_for(kk))
+                    c.font = HEADER_FONT
+                    c.fill = HEADER_FILL
+                    c.border = BORDER
+                for r, item in enumerate(v, start=2):
+                    for i, kk in enumerate(cols):
+                        val = item.get(kk)
+                        if isinstance(val, list):
+                            val = " · ".join(str(x) for x in val)
+                        elif isinstance(val, dict):
+                            val = "\n".join(f"{_label_for(kkk)}: {vvv}" for kkk, vvv in val.items())
+                        c = ws.cell(row=r, column=i + 1, value=val if val is not None else "")
+                        c.font = BODY
+                        c.border = BORDER
+                        c.alignment = WRAP
+                # column widths
+                for i, kk in enumerate(cols):
+                    width = max(14, min(48, max((len(str(it.get(kk, ""))) for it in v), default=14) // 2 + 12))
+                    ws.column_dimensions[get_column_letter(i + 1)].width = width
+                # add a pointer row in Overview
+                write_kv(k, f"See sheet: '{sheet_name}'  ·  {len(v)} rows")
+
+    buf = BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
