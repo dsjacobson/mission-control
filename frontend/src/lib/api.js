@@ -3,7 +3,14 @@ import axios from "axios";
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 export const API = `${BACKEND_URL}/api`;
 
-const client = axios.create({ baseURL: API });
+// If AGENT_API_KEY is set on the server, the frontend also needs to send it.
+// (Fine for a single-user desktop app — for multi-user you'd want a real auth flow.)
+const AGENT_API_KEY = process.env.REACT_APP_AGENT_API_KEY || "";
+
+const client = axios.create({
+  baseURL: API,
+  headers: AGENT_API_KEY ? { "X-API-Key": AGENT_API_KEY } : {},
+});
 
 export const api = {
   // Clients

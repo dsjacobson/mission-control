@@ -35,6 +35,7 @@ import screamingfrog
 import semrush_csv
 import semrush
 import deliverable_exports
+import agent_manifest
 import sf_bridge
 import executor
 import keyword_map as kw_map_lib
@@ -62,11 +63,36 @@ def _strip_id(doc):
     return doc
 
 
-# ============ Health ============
+# ============ Health & Agent manifest ============
 
 @api.get("/")
 async def root():
     return {"service": "seo-operator", "status": "ok"}
+
+
+@api.get("/health")
+async def health():
+    """Probe endpoint. Also reports which agent-facing features are ready."""
+    return {
+        "status": "ok",
+        "auth_required": bool(os.environ.get("AGENT_API_KEY", "").strip()),
+        "integrations": {
+            "semrush": semrush.is_configured(),
+            "dataforseo": dfs_lib.is_configured(),
+        },
+    }
+
+
+@api.get("/agent/manifest")
+async def agent_manifest_endpoint():
+    """Operator's guide for autonomous agents (Claude Cowork / Claude Computer Use).
+
+    Fetch this ONCE at session start; it describes every resource, high-level
+    workflow, and safety rule. For exact endpoint schemas, see /api/openapi.json.
+    Exempt from the API-key gate so agents can discover before authenticating.
+    """
+    base = os.environ.get("REACT_APP_BACKEND_URL", "").strip()
+    return agent_manifest.build_manifest(backend_base_url=base)
 
 
 # ============ Clients ============
@@ -1606,6 +1632,42 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ---- API key middleware (opt-in) --------------------------------------------
+# If AGENT_API_KEY is set, every /api/* request except health/docs/share/manifest
+# must include header `X-API-Key: <that value>`. If unset, the API stays open
+# (current single-user desktop mode).
+
+AGENT_API_KEY = os.environ.get("AGENT_API_KEY", "").strip()
+# Paths that never require the API key (docs, health, public share links, manifest).
+# Exact-match set + prefix set below.
+_AUTH_EXEMPT_EXACT = {"/", "/api", "/api/", "/api/health", "/api/agent/manifest", "/openapi.json", "/docs", "/redoc"}
+_AUTH_EXEMPT_PREFIXES = ("/api/share/", "/docs/", "/redoc/")
+
+
+@app.middleware("http")
+async def api_key_gate(request, call_next):
+    if not AGENT_API_KEY:
+        return await call_next(request)
+    path = request.url.path
+    # Non-API routes (frontend static assets, if any) — pass through
+    if not path.startswith("/api"):
+        return await call_next(request)
+    # OPTIONS is CORS preflight — always allow
+    if request.method == "OPTIONS":
+        return await call_next(request)
+    # Exempt paths
+    if path in _AUTH_EXEMPT_EXACT or any(path.startswith(p) for p in _AUTH_EXEMPT_PREFIXES):
+        return await call_next(request)
+    key = request.headers.get("x-api-key") or request.query_params.get("api_key")
+    if key != AGENT_API_KEY:
+        from starlette.responses import JSONResponse
+        return JSONResponse(
+            {"detail": "Missing or invalid X-API-Key header"},
+            status_code=401,
+        )
+    return await call_next(request)
 
 
 @app.on_event("shutdown")
