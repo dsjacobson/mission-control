@@ -26,6 +26,25 @@ const workflowTypeSchema = z.enum([
 ]);
 
 export function registerMissionControlTools(server: McpServer): void {
+  // --- Session start ---------------------------------------------------------
+
+  server.registerTool(
+    'session_start',
+    {
+      title: 'Session orientation snapshot',
+      description:
+        'One-shot orientation call: returns integrations health, per-client workload (pending approvals, active runs, last run), and 10 most recent runs across all clients. Call this once at the start of a session to skip 3-4 exploratory list_* calls. Safe to Always allow.',
+      inputSchema: {}
+    },
+    async () => {
+      try {
+        return jsonResult(await missionControl.sessionStart());
+      } catch (error) {
+        return errorResult(error);
+      }
+    }
+  );
+
   // --- Read tools ------------------------------------------------------------
 
   server.registerTool(

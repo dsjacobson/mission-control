@@ -183,6 +183,38 @@ class MissionControlClient {
     });
   }
 
+  // --- Agent orientation ----------------------------------------------------
+
+  /**
+   * One-shot orientation call. Returns integrations health, global totals,
+   * per-client workload snapshot (pending_approvals, active_runs, last_run),
+   * and 10 most recent runs. Replaces 3-4 separate exploratory calls at the
+   * start of every session.
+   */
+  sessionStart(): Promise<{
+    server_time: string;
+    integrations: Record<string, { configured: boolean }>;
+    totals: {
+      clients: number;
+      pending_approvals: number;
+      active_runs: number;
+      completed_runs: number;
+    };
+    clients: Array<{
+      id: string;
+      name: string;
+      domain: string;
+      competitors_count: number;
+      pending_approvals: number;
+      active_runs: number;
+      last_run: WorkflowRun | null;
+    }>;
+    recent_runs: WorkflowRun[];
+    hint: string;
+  }> {
+    return this.request('/api/agent/session-start');
+  }
+
   /** Streams the export directly (used by the /downloads proxy route in index.ts). */
   async fetchApprovalExport(
     id: string,

@@ -115,6 +115,7 @@ wherever it actually ends up.
 ## Tools this exposes
 
 Read (safe to set to **Always allow**):
+- `session_start` — one-shot orientation: integrations health, per-client workload, recent runs
 - `list_clients`, `get_client` — client workspaces
 - `list_runs`, `get_run` — workflow run status
 - `list_approvals` — the approval queue
