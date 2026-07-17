@@ -29,7 +29,10 @@ def build_manifest(backend_base_url: str = "") -> Dict[str, Any]:
             "content_brief) auto-execute their fixes when approved. Deliverable-style "
             "approvals (competitive_deliverable, strategy_doc, competitor_insight) are "
             "reference documents that go into the client's Deliverables backlog when approved. "
-            "Always prefer the high-level workflow endpoints over composing low-level ones."
+            "Always prefer the high-level workflow endpoints over composing low-level ones. "
+            "TIP: call GET /api/agent/session-start once right after reading this manifest — "
+            "it returns integrations health, per-client pending-approval counts, active runs, "
+            "and last-run summaries in one shot, saving 3-4 exploratory calls."
         ),
         "resources": {
             "client": {
@@ -159,4 +162,8 @@ def build_manifest(backend_base_url: str = "") -> Dict[str, Any]:
         },
         "openapi_spec": "GET /openapi.json  (full OpenAPI 3 schema — use this for exact param/response shapes)",
         "interactive_docs": "GET /docs  (Swagger UI) · GET /redoc  (ReDoc)",
+        "session_start": {
+            "endpoint": "GET /api/agent/session-start",
+            "description": "One-shot orientation call: integrations health, per-client pending-approval counts, active runs, and last-run summaries. Call once right after reading this manifest to skip 3-4 exploratory API calls.",
+        },
     }

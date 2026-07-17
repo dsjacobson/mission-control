@@ -95,6 +95,83 @@ async def agent_manifest_endpoint():
     return agent_manifest.build_manifest(backend_base_url=base)
 
 
+@api.get("/agent/session-start")
+async def agent_session_start():
+    """One-shot orientation call for autonomous agents.
+
+    Bundles integrations health + per-client workload snapshot + recent runs
+    into a single response, so Cowork/Claude Code can skip 3-4 exploratory
+    calls at the start of every session. Requires the API key.
+    """
+    from datetime import datetime, timezone
+
+    # Integrations health (cheap; no external API calls)
+    integrations = {
+        "semrush": {"configured": semrush.is_configured()},
+        "dataforseo": {"configured": dfs_lib.is_configured()},
+    }
+
+    # Global counts
+    totals = {
+        "clients": await db.clients.count_documents({}),
+        "pending_approvals": await db.approvals.count_documents({"status": "pending"}),
+        "active_runs": await db.runs.count_documents({"status": {"$in": ["queued", "running"]}}),
+        "completed_runs": await db.runs.count_documents({"status": "completed"}),
+    }
+
+    # Per-client workload snapshot
+    client_docs = await db.clients.find(
+        {}, {"_id": 0, "id": 1, "name": 1, "domain": 1, "competitors": 1}
+    ).to_list(100)
+
+    clients_summary: List[Dict[str, Any]] = []
+    for c in client_docs:
+        cid = c.get("id")
+        if not cid:
+            continue
+        pending = await db.approvals.count_documents({"client_id": cid, "status": "pending"})
+        active = await db.runs.count_documents(
+            {"client_id": cid, "status": {"$in": ["queued", "running"]}}
+        )
+        last_run_doc = await db.runs.find_one(
+            {"client_id": cid},
+            {"_id": 0, "id": 1, "type": 1, "status": 1, "created_at": 1},
+            sort=[("created_at", -1)],
+        )
+        clients_summary.append({
+            "id": cid,
+            "name": c.get("name"),
+            "domain": c.get("domain"),
+            "competitors_count": len(c.get("competitors") or []),
+            "pending_approvals": pending,
+            "active_runs": active,
+            "last_run": last_run_doc,
+        })
+
+    # Recent runs across all clients (with approval counts already useful)
+    recent_runs = await db.runs.find(
+        {}, {"_id": 0, "id": 1, "client_id": 1, "type": 1, "status": 1, "created_at": 1}
+    ).sort("created_at", -1).to_list(10)
+    for r in recent_runs:
+        r["approvals_pending"] = await db.approvals.count_documents(
+            {"run_id": r.get("id"), "status": "pending"}
+        )
+
+    return {
+        "server_time": datetime.now(timezone.utc).isoformat(),
+        "integrations": integrations,
+        "totals": totals,
+        "clients": clients_summary,
+        "recent_runs": recent_runs,
+        "hint": (
+            "Read /api/agent/manifest for the full operator's guide. Prefer high-level "
+            "endpoints like POST /api/clients/{id}/competitive-analysis over composing "
+            "low-level calls. Approvals of kind 'technical_action' or 'page_optimization' "
+            "auto-execute on the live site — never approve those without explicit user permission."
+        ),
+    }
+
+
 # ============ Clients ============
 
 @api.get("/clients", response_model=List[Client])

@@ -258,6 +258,22 @@ only), Screaming Frog MCP.
   `POST /login`, `POST /token` all light up in Render logs, Claude Desktop
   shows Mission Control as Connected, tools available for use.
 
+### 2026-02 — Agent session-start endpoint
+- `GET /api/agent/session-start` — one-shot orientation call for autonomous
+  agents (Cowork / Claude Desktop MCP). Returns:
+  - `integrations`: semrush/dataforseo configured status
+  - `totals`: clients, pending_approvals, active_runs, completed_runs
+  - `clients[]`: per-client name/domain/competitors_count/pending_approvals/
+    active_runs/last_run
+  - `recent_runs[]`: 10 most recent across all clients with approvals_pending
+  - `hint`: safety reminder about executable approval kinds
+- Saves 3-4 exploratory calls per session (`/api/health` + `/api/clients` +
+  `/api/runs/active/all` + per-client approval fetches).
+- Manifest primer + resources.session_start updated to advertise it.
+- Requires the API key (not exempt like `/agent/manifest`).
+- Verified via curl on preview: shape correct, counts match dashboard.
+- Redeploy needed to make live on prod (`seo-agent-hub-3.emergent.host`).
+
 ## Notes
 - `EMERGENT_LLM_KEY` lives in `/app/backend/.env`.
 - Frontend backend URL: `REACT_APP_BACKEND_URL` (do not hardcode).
