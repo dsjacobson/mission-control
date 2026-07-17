@@ -98,6 +98,26 @@ On first connect, your browser opens a consent page asking for the
 
 You can loosen write permissions later once you trust specific flows.
 
+### Gotchas
+
+- **After any Render redeploy, remove and re-add the connector in Claude.**
+  This server keeps registered OAuth clients + tokens in memory (see
+  `src/auth/store.ts`), so every redeploy invalidates whatever Claude cached.
+  Claude Desktop in particular won't auto-recover from a stale client — it
+  silently sits on the old state and refuses to initiate a fresh flow. Fix:
+  Settings → Connectors → Mission Control → Remove → fully quit Claude →
+  reopen → Add custom connector again.
+- **First deploy will crash on missing PUBLIC_URL** if you leave it truly
+  blank at Blueprint time. Set it to any placeholder (e.g.
+  `https://placeholder.example.com`) so the first deploy boots, then update
+  it to the real Render URL and Save Changes to redeploy.
+- **`app.set('trust proxy', 1)` is required** for Render (and any PaaS that
+  fronts you with a load balancer). Without it, the MCP SDK's rate limiter
+  on `/token` crashes with `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR` mid-request,
+  which manifests as Claude's browser "Couldn't connect" page after you
+  submit the consent password. Already baked into `src/index.ts` in this
+  repo, but don't remove it.
+
 ## Cost note
 
 Render's free web-service tier spins the container down after 15 min of idle

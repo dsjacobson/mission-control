@@ -239,20 +239,24 @@ only), Screaming Frog MCP.
   `list_approvals`) + write (`create_client`, `add_competitor`,
   `run_competitive_analysis`, `launch_workflow`, `decide_approval`,
   `bulk_decide_approvals`, `archive_decided_approvals`,
-  `get_approval_export_link`). Executable-kind warnings baked into tool
-  descriptions so Claude sees them at every call site.
-- Verified locally: `npm run build` clean, server listens on 3300,
-  `/health` returns `{ok:true}`, `/mcp` returns 401 without bearer,
-  OAuth well-known metadata serves correctly.
-- Deploy plan documented in `/app/mission-control-mcp/DEPLOY.md` +
-  `/app/mission-control-mcp/render.yaml` (Blueprint config). Chosen host:
-  Render (standalone), because `src/index.ts` uses `new URL('/mcp', publicUrl)`
-  which discards any path prefix — colocating under `/mcp-connector/*` on
-  the FastAPI domain would require patching the Node code.
-- Waiting on user: (1) Emergent Deploy button for stable Mission Control URL,
-  (2) push /app to GitHub via Save-to-GitHub, (3) Render Blueprint deploy of
-  the `mission-control-mcp` subfolder, (4) send back final `/mcp` URL for
-  Claude connector settings.
+  `get_approval_export_link`).
+- Deployed to Render at `https://mission-control-mcp-r04q.onrender.com`
+  (standalone service, Blueprint config in `render.yaml`).
+- Mission Control deployed to production at
+  `https://seo-agent-hub-3.emergent.host`. Preview `AGENT_API_KEY` mirrors
+  to prod (verified with a curl).
+- Two bugs found and fixed during Claude Desktop connect:
+  1. `src/index.ts` needed `app.set('trust proxy', 1)` — without it the
+     MCP SDK's rate limiter on `/token` crashed with
+     `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR`, which surfaced as Claude's
+     browser "Couldn't connect" page after password submit.
+  2. Claude Desktop caches client_id + refresh tokens; on any Render
+     redeploy the in-memory `oauthStore` wipes and Claude sits on stale
+     state without retrying. Fix: remove connector + fully quit Claude +
+     re-add. Documented in `mission-control-mcp/DEPLOY.md` gotchas.
+- Verified end-to-end: consent page loads, `POST /register`, `GET /authorize`,
+  `POST /login`, `POST /token` all light up in Render logs, Claude Desktop
+  shows Mission Control as Connected, tools available for use.
 
 ## Notes
 - `EMERGENT_LLM_KEY` lives in `/app/backend/.env`.
