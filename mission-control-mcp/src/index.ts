@@ -15,6 +15,10 @@ import { createMissionControlMcpServer } from './mcp/server.js';
 import { missionControl } from './missionControlClient.js';
 
 const app = express();
+// Render (and most PaaS) put us behind a reverse proxy that sets X-Forwarded-*.
+// Without this, the MCP SDK's rate limiter throws ERR_ERL_UNEXPECTED_X_FORWARDED_FOR
+// on /token requests, breaking the OAuth code exchange.
+app.set('trust proxy', 1);
 app.use(express.urlencoded({ extended: true }));
 
 const publicUrl = new URL(config.publicUrl);
