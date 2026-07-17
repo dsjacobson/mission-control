@@ -40,12 +40,12 @@ Option A — Blueprint (uses `mission-control-mcp/render.yaml`):
 
 | Variable | Value |
 |---|---|
-| `PUBLIC_URL` | Leave blank for now — you'll set this after the service gets its Render URL (see step 3) |
+| `PUBLIC_URL` | Set to any placeholder for now (e.g. `https://placeholder.example.com`). The service refuses to start without it, so a placeholder gets you past the first deploy — you'll replace it with the real Render URL in step 3. |
 | `DASHBOARD_PASSWORD` | Pick a strong password. This is the ONLY gate on who can connect Claude to your Mission Control. Don't reuse anything. |
-| `MISSION_CONTROL_API_BASE_URL` | Your deployed Mission Control URL from the prerequisite step, e.g. `https://mission-control-prod.emergentagent.com` |
+| `MISSION_CONTROL_API_BASE_URL` | Your deployed Mission Control URL, e.g. `https://seo-agent-hub-3.emergent.host` |
 | `MISSION_CONTROL_API_KEY` | The current `AGENT_API_KEY` value from `/app/backend/.env`. Copy from that file directly — do not paste it here in chat. |
 
-6. Click **Apply** and wait for the first deploy (~2 min).
+6. Click **Apply** and wait for the first deploy (~2 min). If you left `PUBLIC_URL` truly blank instead of a placeholder, the deploy will fail with `Missing required environment variable: PUBLIC_URL` — that's expected; just move to step 3 and it'll self-heal on the next deploy.
 
 Option B — Manual (if Blueprint fails for any reason):
 
