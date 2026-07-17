@@ -20,13 +20,14 @@ const app = express();
 // on /token requests, breaking the OAuth code exchange.
 app.set('trust proxy', 1);
 
-// Access log — one line per request. Cheap to run, invaluable when Claude's
-// end-of-flow errors leave us guessing which endpoint it hit last.
+// Access log — one line per request. Skip /health because Render's platform
+// probe hammers it every second and would drown out real traffic.
 app.use((req, res, next) => {
+  if (req.path === '/health') return next();
   const started = Date.now();
   res.on('finish', () => {
     const elapsed = Date.now() - started;
-    console.log(`${req.method} ${req.path} → ${res.statusCode} (${elapsed}ms)`);
+    console.log(`${req.method} ${req.originalUrl} → ${res.statusCode} (${elapsed}ms)`);
   });
   next();
 });
@@ -119,14 +120,29 @@ const requireAuth = requireBearerAuth({
   resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(mcpEndpointUrl)
 });
 
-app.post('/mcp', requireAuth, express.json(), (req, res) => {
-  transport.handleRequest(req, res, req.body);
+app.post('/mcp', requireAuth, express.json(), async (req, res) => {
+  try {
+    await transport.handleRequest(req, res, req.body);
+  } catch (err) {
+    console.error('[/mcp POST]', err instanceof Error ? err.stack : err);
+    if (!res.headersSent) res.status(500).json({ error: 'mcp_transport_error' });
+  }
 });
-app.get('/mcp', requireAuth, (req, res) => {
-  transport.handleRequest(req, res);
+app.get('/mcp', requireAuth, async (req, res) => {
+  try {
+    await transport.handleRequest(req, res);
+  } catch (err) {
+    console.error('[/mcp GET]', err instanceof Error ? err.stack : err);
+    if (!res.headersSent) res.status(500).json({ error: 'mcp_transport_error' });
+  }
 });
-app.delete('/mcp', requireAuth, (req, res) => {
-  transport.handleRequest(req, res);
+app.delete('/mcp', requireAuth, async (req, res) => {
+  try {
+    await transport.handleRequest(req, res);
+  } catch (err) {
+    console.error('[/mcp DELETE]', err instanceof Error ? err.stack : err);
+    if (!res.headersSent) res.status(500).json({ error: 'mcp_transport_error' });
+  }
 });
 
 // Streams an approval export through this server, so the raw Mission Control API key
