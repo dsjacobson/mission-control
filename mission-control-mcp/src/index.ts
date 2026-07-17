@@ -19,6 +19,18 @@ const app = express();
 // Without this, the MCP SDK's rate limiter throws ERR_ERL_UNEXPECTED_X_FORWARDED_FOR
 // on /token requests, breaking the OAuth code exchange.
 app.set('trust proxy', 1);
+
+// Access log — one line per request. Cheap to run, invaluable when Claude's
+// end-of-flow errors leave us guessing which endpoint it hit last.
+app.use((req, res, next) => {
+  const started = Date.now();
+  res.on('finish', () => {
+    const elapsed = Date.now() - started;
+    console.log(`${req.method} ${req.path} → ${res.statusCode} (${elapsed}ms)`);
+  });
+  next();
+});
+
 app.use(express.urlencoded({ extended: true }));
 
 const publicUrl = new URL(config.publicUrl);
