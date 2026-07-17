@@ -1,0 +1,114 @@
+# Deploying mission-control-mcp on Render
+
+Reasoning behind the choice: this service was written to be its own host
+(`src/index.ts` strips any path prefix off `PUBLIC_URL` when computing the MCP
+endpoint URL). Colocating it under `/mcp-connector/*` on the existing FastAPI
+domain would require patching the Node code and risks silent OAuth-discovery
+breakage. Render is Cowork's own fallback recommendation, matches the
+`.env.example`, and needs zero code changes.
+
+## Prerequisites
+
+1. **Mission Control has a stable production URL.** Click the **Deploy** button
+   in Emergent to get one (the current `seo-agent-hub-3.preview.emergentagent.com`
+   is preview-only and will die if the workspace restarts). Note the resulting
+   URL — you'll paste it as `MISSION_CONTROL_API_BASE_URL` below.
+
+2. **A GitHub account** (Render deploys from git). Use Emergent's "Save to
+   GitHub" button on `/app` to push this repo. `mission-control-mcp/` will
+   land inside the repo as a subfolder.
+
+3. **A Render account** — https://render.com/, free to create.
+
+## Steps
+
+### 1. Push /app to GitHub
+
+Click Emergent's **Save to GitHub** in the chat input. Note the repo URL
+(e.g. `https://github.com/<you>/seo-operator`).
+
+### 2. Deploy on Render via Blueprint
+
+Option A — Blueprint (uses `mission-control-mcp/render.yaml`):
+
+1. Go to https://dashboard.render.com/blueprints
+2. Click **New Blueprint Instance**
+3. Connect your GitHub, pick the repo you pushed in step 1
+4. Render will detect `mission-control-mcp/render.yaml` and pre-fill the
+   service. Approve.
+5. On the **Environment Variables** screen, fill these four:
+
+| Variable | Value |
+|---|---|
+| `PUBLIC_URL` | Leave blank for now — you'll set this after the service gets its Render URL (see step 3) |
+| `DASHBOARD_PASSWORD` | Pick a strong password. This is the ONLY gate on who can connect Claude to your Mission Control. Don't reuse anything. |
+| `MISSION_CONTROL_API_BASE_URL` | Your deployed Mission Control URL from the prerequisite step, e.g. `https://mission-control-prod.emergentagent.com` |
+| `MISSION_CONTROL_API_KEY` | The current `AGENT_API_KEY` value from `/app/backend/.env`. Copy from that file directly — do not paste it here in chat. |
+
+6. Click **Apply** and wait for the first deploy (~2 min).
+
+Option B — Manual (if Blueprint fails for any reason):
+
+1. New → **Web Service**
+2. Connect the repo, set **Root Directory** = `mission-control-mcp`
+3. Build command: `npm ci && npm run build`
+4. Start command: `node dist/index.js`
+5. Add the four env vars from the table above
+6. Deploy
+
+### 3. Set PUBLIC_URL and redeploy
+
+After the first deploy, Render assigns your service a URL like
+`https://mission-control-mcp-abcd.onrender.com`.
+
+1. Go to the service → **Environment** → set:
+   `PUBLIC_URL = https://mission-control-mcp-abcd.onrender.com`
+   (no trailing slash, no `/mcp` suffix — the code appends `/mcp` itself)
+2. Trigger a redeploy.
+
+### 4. Verify it's alive
+
+```bash
+curl https://mission-control-mcp-abcd.onrender.com/health
+# → {"ok":true}
+
+curl https://mission-control-mcp-abcd.onrender.com/.well-known/oauth-authorization-server
+# → JSON with authorization_endpoint / token_endpoint / etc.
+```
+
+### 5. Connect it to Claude
+
+Follow the README's "Connecting it to Claude" section. The URL you paste into
+Claude's connector settings is:
+
+```
+https://mission-control-mcp-abcd.onrender.com/mcp
+```
+
+On first connect, your browser opens a consent page asking for the
+`DASHBOARD_PASSWORD` you set in step 2. Enter it. Done.
+
+### 6. Recommended tool permissions in Claude
+
+- Read tools (`list_clients`, `get_client`, `list_runs`, `get_run`,
+  `list_approvals`) → **Always allow**
+- Write tools (`create_client`, `add_competitor`, `run_competitive_analysis`,
+  `launch_workflow`, `decide_approval`, `bulk_decide_approvals`,
+  `archive_decided_approvals`, `get_approval_export_link`) → **Ask every time**
+
+You can loosen write permissions later once you trust specific flows.
+
+## Cost note
+
+Render's free web-service tier spins the container down after 15 min of idle
+and takes ~30s to cold-start. That's fine for interactive Claude sessions
+(you'll notice a small delay on the first call, everything else is instant).
+If you use it heavily and want no cold starts, the Starter plan is $7/mo.
+
+## Rotating credentials later
+
+- **Dashboard password**: change `DASHBOARD_PASSWORD` in Render env, redeploy.
+  All existing Claude sessions become invalid; reconnect once.
+- **API key**: regenerate `AGENT_API_KEY` in `/app/backend/.env` on the
+  Mission Control side, restart backend. Then update `MISSION_CONTROL_API_KEY`
+  in Render env and redeploy.
