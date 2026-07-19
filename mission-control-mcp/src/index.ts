@@ -108,12 +108,13 @@ app.post('/login', async (req, res) => {
 });
 
 // The actual MCP endpoint. Everything above exists to gate this behind a real access
-// token; everything it does is delegated to Mission Control's own API and auth.
-const mcpServer = createMissionControlMcpServer();
-const transport = new StreamableHTTPServerTransport({
-  sessionIdGenerator: () => crypto.randomUUID()
-});
-await mcpServer.connect(transport);
+// token; everything below delegates to Mission Control's own API and auth.
+//
+// Stateless-per-request mode: we create a fresh McpServer + transport for every
+// incoming request. `enableJsonResponse: true` makes the transport reply with a
+// plain JSON body instead of an SSE stream, which is far more reliable behind
+// PaaS reverse proxies (Render, Vercel, etc.) that mangle or drop custom headers
+// like `Mcp-Session-Id` and can interact badly with long-lived event-streams.
 
 const requireAuth = requireBearerAuth({
   verifier: provider,
@@ -122,27 +123,31 @@ const requireAuth = requireBearerAuth({
 
 app.post('/mcp', requireAuth, express.json(), async (req, res) => {
   try {
+    const server = createMissionControlMcpServer();
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+      enableJsonResponse: true
+    });
+    res.on('close', () => {
+      transport.close().catch(() => {});
+      server.close().catch(() => {});
+    });
+    await server.connect(transport);
     await transport.handleRequest(req, res, req.body);
   } catch (err) {
     console.error('[/mcp POST]', err instanceof Error ? err.stack : err);
     if (!res.headersSent) res.status(500).json({ error: 'mcp_transport_error' });
   }
 });
-app.get('/mcp', requireAuth, async (req, res) => {
-  try {
-    await transport.handleRequest(req, res);
-  } catch (err) {
-    console.error('[/mcp GET]', err instanceof Error ? err.stack : err);
-    if (!res.headersSent) res.status(500).json({ error: 'mcp_transport_error' });
-  }
+
+// Stateless mode doesn't use GET/DELETE for session management — those are for
+// SSE streams and explicit session close, both of which we disabled by not using
+// sessionIdGenerator. Reject with 405 so clients don't hang waiting for them.
+app.get('/mcp', requireAuth, (_req, res) => {
+  res.status(405).json({ error: 'GET not supported in stateless mode' });
 });
-app.delete('/mcp', requireAuth, async (req, res) => {
-  try {
-    await transport.handleRequest(req, res);
-  } catch (err) {
-    console.error('[/mcp DELETE]', err instanceof Error ? err.stack : err);
-    if (!res.headersSent) res.status(500).json({ error: 'mcp_transport_error' });
-  }
+app.delete('/mcp', requireAuth, (_req, res) => {
+  res.status(405).json({ error: 'DELETE not supported in stateless mode' });
 });
 
 // Streams an approval export through this server, so the raw Mission Control API key

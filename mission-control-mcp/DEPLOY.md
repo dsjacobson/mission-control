@@ -106,7 +106,11 @@ You can loosen write permissions later once you trust specific flows.
   Claude Desktop in particular won't auto-recover from a stale client — it
   silently sits on the old state and refuses to initiate a fresh flow. Fix:
   Settings → Connectors → Mission Control → Remove → fully quit Claude →
-  reopen → Add custom connector again.
+  reopen → Add custom connector again. On Windows Store builds of Claude
+  Desktop, if a plain Remove-and-readd doesn't clear stale state, do a full
+  reset via Settings → Apps → Installed apps → Claude → Advanced options →
+  Reset (or `Get-AppxPackage *Claude* | Reset-AppxPackage` in admin
+  PowerShell).
 - **First deploy will crash on missing PUBLIC_URL** if you leave it truly
   blank at Blueprint time. Set it to any placeholder (e.g.
   `https://placeholder.example.com`) so the first deploy boots, then update
@@ -117,6 +121,13 @@ You can loosen write permissions later once you trust specific flows.
   which manifests as Claude's browser "Couldn't connect" page after you
   submit the consent password. Already baked into `src/index.ts` in this
   repo, but don't remove it.
+- **Stateless-per-request MCP transport with JSON responses.** `src/index.ts`
+  creates a fresh McpServer + StreamableHTTPServerTransport for every request
+  with `sessionIdGenerator: undefined` and `enableJsonResponse: true`. This
+  is deliberately different from the SDK's stateful default — Render's proxy
+  can mangle or drop the `Mcp-Session-Id` header the stateful mode depends
+  on, and long-lived SSE streams behind PaaS proxies are unreliable. Plain
+  request/response JSON is boring but works.
 
 ## Cost note
 
