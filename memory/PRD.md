@@ -290,6 +290,46 @@ only), Screaming Frog MCP.
   and `/app/connectors/dynasty-mcp/` when we get there — cloned from
   Mission Control MCP template.
 
+### 2026-02 — SEO Toolkit MCP Connector — LIVE
+- SEO Toolkit's backend agent shipped the full agent-facing API layer per
+  `/app/SEO-TOOLKIT-AGENT-SPEC.md` (deployed to `https://seo-toolkit.emerald.consulting`).
+  Key deviations from the original spec (all upgrades):
+  - No frontend API-key embed (multi-user auth model with billing on the roadmap)
+  - X-API-Key impersonates workspace owner (`reporting@emerald.consulting` by
+    default, `AGENT_USER_EMAIL` env override)
+  - Most workflow tools are async (return `{job_id, status, poll}`) — only
+    `gsc_cluster_topics` is synchronous
+  - Real input shapes: `content-gap` takes `keywords: [{keyword, volume?, ...}]`,
+    `keyword-url-map` takes two raw CSVs, `recipe-pipeline` takes
+    `{recipe_id, site_name}`, `optimized-article` takes just `brief_id`
+- `/app/seo-toolkit-mcp/` — new MCP connector, forked from Mission Control MCP.
+  Structural changes:
+  - `src/seoToolkitClient.ts` (replaces `missionControlClient.ts`)
+  - `src/mcp/tools.ts` — 11 tools including new `get_job_status` for async polling
+  - `src/config.ts` — new `resolvePublicUrl()` helper falls back to
+    `RENDER_EXTERNAL_URL` (Render auto-injected) → eliminates first-deploy
+    bootstrap dance. Also applied to `mission-control-mcp/src/config.ts`
+- Deployed to Render at `https://seo-toolkit-mcp.onrender.com` (standalone
+  Web Service, not Blueprint — Blueprint auto-detect of new subfolder services
+  didn't work; manual creation clicked through in one shot)
+- Bugs found + fixed during deploy:
+  - TypeScript `^7.0.2` and `@types/node ^26.1.1` in Cowork's original
+    `package.json` don't exist as stable releases → npm resolved to broken
+    preview binaries on Render. Pinned to `typescript ^5.9.2` and
+    `@types/node ^20.14.0`
+  - Windows Store Claude Desktop cached stale OAuth state → required Reset
+    via `Get-AppxPackage *Claude* | Reset-AppxPackage`. Same pattern as
+    Mission Control
+- Claude Desktop tool permissions:
+  - Always allow: `session_start`, `list_projects`, `get_project`,
+    `get_job_status`, `generate_content_brief`, `page_optimizer`,
+    `run_recipe_pipeline`, `create_optimized_article`, `gsc_cluster_topics`
+  - Ask every time: `competitor_content_gap`, `page_seo_analysis`,
+    `keyword_url_map`
+- Verified end-to-end: `POST /mcp → 200 / 202 / 200` sequence (initialize →
+  initialized → tools/list) fires in Render logs when Claude invokes tools.
+  User confirmed working.
+
 ## Notes
 - `EMERGENT_LLM_KEY` lives in `/app/backend/.env`.
 - Frontend backend URL: `REACT_APP_BACKEND_URL` (do not hardcode).
