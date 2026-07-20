@@ -274,6 +274,22 @@ only), Screaming Frog MCP.
 - Verified via curl on preview: shape correct, counts match dashboard.
 - Redeploy needed to make live on prod (`seo-agent-hub-3.emergent.host`).
 
+### 2026-02 — Multi-app expansion planning
+- User confirmed SEO-Toolkit (`seo-toolkit.emerald.consulting`) and Dynasty
+  Deal Finder (`dynastytrademaker.com`) as next candidates for Claude
+  connectors. Both React+FastAPI+Mongo (same stack as Mission Control).
+- Approach: doing SEO-Toolkit first end-to-end (spec → in-app impl → MCP
+  connector → Render → Claude), Dynasty second.
+- Wrote `/app/SEO-TOOLKIT-AGENT-SPEC.md` — self-contained document for the
+  toolkit's own Emergent agent. Contains: API-key middleware, manifest module
+  with 8 pre-declared tools (all `cost: "billed"`), session-start endpoint,
+  REST wrapper contracts for each capability, testing checklist. Waiting on
+  user to hand this to the toolkit agent and report back with API key +
+  prod URL + any deviations.
+- Long-term: connector code will live at `/app/connectors/seo-toolkit-mcp/`
+  and `/app/connectors/dynasty-mcp/` when we get there — cloned from
+  Mission Control MCP template.
+
 ## Notes
 - `EMERGENT_LLM_KEY` lives in `/app/backend/.env`.
 - Frontend backend URL: `REACT_APP_BACKEND_URL` (do not hardcode).
