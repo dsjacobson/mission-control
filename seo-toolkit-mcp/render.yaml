@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: seo-toolkit-mcp
+    runtime: node
+    plan: starter
+    region: oregon
+    branch: main
+    rootDir: seo-toolkit-mcp
+    buildCommand: npm ci && npm run build
+    startCommand: node dist/index.js
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: PORT
+        value: 3300
+      - key: PUBLIC_URL
+        sync: false
+      - key: DASHBOARD_PASSWORD
+        sync: false
+      - key: SEO_TOOLKIT_API_BASE_URL
+        sync: false
+      - key: SEO_TOOLKIT_API_KEY
+        sync: false
