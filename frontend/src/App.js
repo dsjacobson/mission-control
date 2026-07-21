@@ -19,6 +19,7 @@ import KeywordMap from "@/pages/KeywordMap";
 import SharePage from "@/pages/SharePage";
 import History from "@/pages/History";
 import RunDetails from "@/pages/RunDetails";
+import Tasks from "@/pages/Tasks";
 
 function App() {
   return (
@@ -40,8 +41,8 @@ function App() {
               <Route path="/clients/:clientId/deliverables" element={<Deliverables />} />
               <Route path="/clients/:clientId/deliverables/competitive/:approvalId" element={<CompetitiveDeliverable />} />
               <Route path="/clients/:clientId/keyword-map" element={<KeywordMap />} />
-              {/* Legacy: /tasks redirects to deliverables */}
-              <Route path="/clients/:clientId/tasks" element={<Navigate to="../deliverables" replace />} />
+              <Route path="/clients/:clientId/tasks" element={<Tasks />} />
+              <Route path="/tasks" element={<Tasks />} />
               <Route path="/approvals" element={<Approvals />} />
               <Route path="/history" element={<History />} />
               <Route path="/runs/:runId" element={<RunDetails />} />

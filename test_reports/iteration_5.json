@@ -1,0 +1,45 @@
+{
+  "summary": "End-to-end test of the new Tasks & Assignees feature (Option B). Backend: 11/11 pytest cases passed covering workers seed, task CRUD, notes_append with timestamp, non-recurring complete -> done, recurring daily/weekly complete keeping status=open and advancing due_at by ~1d/~7d, 404 validation for bad client_id / assignee_id, delete + list filtering. Frontend: /tasks UI loads with sidebar highlight (Bet Fine 24 active), New task dialog opens and creates tasks, Start button flips badge to 'In progress', Complete moves task to 'Recently completed' with Done badge and shows a Reopen button, Delete removes row and shows 'Task deleted' toast, recurring daily task retains Open + Daily badges after Complete and moves to Upcoming with an advanced due date, filters (Status/Assignee) are present and functional, and api.js helpers (listWorkers/listAssignableTasks/createAssignableTask/updateAssignableTask/completeAssignableTask/deleteAssignableTask) are wired correctly (no api.get/post/patch/delete regressions). 0 real console errors captured.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "/tasks (dev/preview build only)",
+        "issues": [
+          "CRA react-error-overlay pops up with the benign 'ResizeObserver loop completed with undelivered notifications' warning after opening a Radix UI Select (Status filter). Behavior underneath is correct and it will NOT appear in a production build. Optional mitigation: swallow this specific error in src/index.js via window.addEventListener('error', ...) or upgrade to a newer react-error-overlay. Not blocking."
+        ]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_tasks_workers.py",
+    "/app/test_reports/pytest/tasks_workers_results.xml"
+  ],
+  "action_items": [
+    "(Optional/low priority) Suppress the ResizeObserver dev-overlay noise in Tasks.jsx or globally in src/index.js so devs aren't distracted by the false-positive overlay."
+  ],
+  "critical_code_review_comments": [
+    "Backend recurrence math uses `today + delta` (not `current_due + delta`) — intentionally documented in _advance_due_at and correct for the 'catch up when overdue' use case. Verified via test_complete_recurring_daily/weekly.",
+    "TaskCreate does not require a title be non-empty (only server-side pydantic requires the field to be present). The Tasks.jsx dialog already blocks empty titles client-side. Consider a min_length=1 constraint on TaskCreate.title for defense in depth (nice-to-have).",
+    "server.py has grown to ~1970 lines; the workers/tasks block (lines 1737-1915) is a clean candidate for extraction into /app/backend/routers/tasks.py for maintainability. Not blocking.",
+    "confirm() is used for delete confirmation in Tasks.jsx — works fine but a shadcn AlertDialog would be more consistent with the rest of the app. Minor UX polish."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_tasks_workers.py (new)"
+  ],
+  "success_rate": {
+    "backend": "100%",
+    "frontend": "100%"
+  },
+  "test_credentials": "No auth used for user-level login. All /api/* calls require X-API-Key header = AGENT_API_KEY from /app/backend/.env (frontend already attaches REACT_APP_AGENT_API_KEY automatically).",
+  "seed_data_creation": "Backend startup auto-seeds worker id='claude-cowork' (verified). Test run also created a 'TEST_human' worker (not cleaned up — 1 stray worker in DB, harmless). All TEST_* tasks were cleaned up in teardown.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Tasks feature is production-ready end-to-end. Backend tests live in /app/backend/tests/test_tasks_workers.py (11 tests, run in ~5s). The frontend page auto-selects the first client (Bet Fine 24) via ClientContext so /tasks is directly usable. Note the CRA dev overlay quirk with Radix Select + ResizeObserver — it's cosmetic only. The only leftover test artifact is a worker named 'TEST_human' created during the assignee-validation test.",
+  "rca_of_the_issue": "N/A — no bugs found. Prior fix (switching Tasks.jsx from api.get/post to api.listAssignableTasks/createAssignableTask/etc. helpers) is verified working: all create/update/complete/delete calls succeed via the correct namespaced helpers in /app/frontend/src/lib/api.js, and axios attaches REACT_APP_AGENT_API_KEY automatically."
+}

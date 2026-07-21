@@ -24,6 +24,12 @@ from models import (
     IntegrationConfig,
     ProgressUpdate,
     RunCreate,
+    Task,
+    TaskComplete,
+    TaskCreate,
+    TaskUpdate,
+    Worker,
+    WorkerCreate,
     WorkflowRun,
     new_id,
     now_iso,
@@ -157,12 +163,24 @@ async def agent_session_start():
             {"run_id": r.get("id"), "status": "pending"}
         )
 
+    # Tasks due now-or-earlier + those in-progress. This is what an assignee
+    # (human or Claude) wants to know first thing.
+    now_iso_str = datetime.now(timezone.utc).isoformat()
+    tasks_due = await db.tasks.find(
+        {"status": {"$in": ["open", "in_progress"]}, "due_at": {"$lte": now_iso_str}},
+        {"_id": 0, "id": 1, "client_id": 1, "title": 1, "assignee_id": 1, "status": 1, "due_at": 1, "recurrence": 1},
+    ).sort("due_at", 1).to_list(50)
+    totals["tasks_due"] = len(tasks_due)
+    totals["tasks_open"] = await db.tasks.count_documents({"status": "open"})
+    totals["tasks_in_progress"] = await db.tasks.count_documents({"status": "in_progress"})
+
     return {
         "server_time": datetime.now(timezone.utc).isoformat(),
         "integrations": integrations,
         "totals": totals,
         "clients": clients_summary,
         "recent_runs": recent_runs,
+        "tasks_due": tasks_due,
         "hint": (
             "Read /api/agent/manifest for the full operator's guide. Prefer high-level "
             "endpoints like POST /api/clients/{id}/competitive-analysis over composing "
@@ -1698,6 +1716,205 @@ async def keyword_map_refinements_list(client_id: str):
 
 
 
+# ============================================================================
+# Workers & Tasks
+# ============================================================================
+#
+# Two collections:
+#   workers  — the people (or agents) who can be assigned a task
+#   tasks    — recurring or one-shot work items with an assignee + due date
+#
+# One agent worker ("Claude Cowork") is seeded at startup so Derek can assign
+# tasks to it from day one. Tasks are deliberately independent of the approvals
+# queue: a task is *how work gets picked up*, an approval is *the gate before
+# something ships*. If a task produces something that needs approval, it still
+# lands in the approvals queue — no changes needed there.
+
+
+CLAUDE_COWORK_WORKER_ID = "claude-cowork"
+
+
+@app.on_event("startup")
+async def seed_workers():
+    """Idempotently ensure the Claude Cowork agent worker exists."""
+    existing = await db.workers.find_one({"id": CLAUDE_COWORK_WORKER_ID})
+    if existing:
+        return
+    seed = Worker(
+        id=CLAUDE_COWORK_WORKER_ID,
+        name="Claude Cowork",
+        type="agent",
+        email=None,
+        active=True,
+    )
+    await db.workers.insert_one(seed.model_dump())
+
+
+# ---- Workers -----------------------------------------------------------------
+
+@api.get("/workers", response_model=List[Worker])
+async def list_workers(active: Optional[bool] = None):
+    query: Dict[str, Any] = {}
+    if active is not None:
+        query["active"] = active
+    docs = await db.workers.find(query, {"_id": 0}).sort("created_at", 1).to_list(500)
+    return docs
+
+
+@api.post("/workers", response_model=Worker)
+async def create_worker(payload: WorkerCreate):
+    worker = Worker(**payload.model_dump())
+    await db.workers.insert_one(worker.model_dump())
+    return worker
+
+
+@api.patch("/workers/{worker_id}", response_model=Worker)
+async def update_worker(worker_id: str, payload: WorkerCreate):
+    """Simple in-place update (name / type / email); use to deactivate too."""
+    updates = {k: v for k, v in payload.model_dump().items() if v is not None}
+    result = await db.workers.update_one({"id": worker_id}, {"$set": updates})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="worker not found")
+    doc = await db.workers.find_one({"id": worker_id}, {"_id": 0})
+    return doc
+
+
+# ---- Tasks -------------------------------------------------------------------
+
+def _advance_due_at(current_due: Optional[str], recurrence: str) -> Optional[str]:
+    """Advance due_at to the next occurrence for a recurring task.
+
+    Uses `today + delta` in UTC (not `current_due + delta`) so a task that was
+    overdue and completed today advances to the next window rather than staying
+    perpetually behind.
+    """
+    from datetime import datetime, timezone, timedelta
+    if recurrence == "daily":
+        delta = timedelta(days=1)
+    elif recurrence == "weekly":
+        delta = timedelta(days=7)
+    else:
+        return None
+    now = datetime.now(timezone.utc)
+    return (now + delta).isoformat()
+
+
+@api.post("/tasks", response_model=Task)
+async def create_task(payload: TaskCreate):
+    # Validate client exists (fail fast — tasks scoped to a workspace)
+    client_doc = await db.clients.find_one({"id": payload.client_id}, {"_id": 0, "id": 1})
+    if not client_doc:
+        raise HTTPException(status_code=404, detail="client not found")
+    if payload.assignee_id:
+        assignee = await db.workers.find_one({"id": payload.assignee_id}, {"_id": 0, "id": 1})
+        if not assignee:
+            raise HTTPException(status_code=404, detail="assignee (worker) not found")
+
+    task = Task(**payload.model_dump())
+    # For recurring tasks without an explicit due_at, kick off today
+    if task.recurrence != "none" and not task.due_at:
+        from datetime import datetime, timezone
+        task.due_at = datetime.now(timezone.utc).isoformat()
+    await db.tasks.insert_one(task.model_dump())
+    return task
+
+
+@api.get("/tasks", response_model=List[Task])
+async def list_tasks_v2(
+    client_id: Optional[str] = None,
+    assignee_id: Optional[str] = None,
+    status: Optional[str] = None,
+    due_before: Optional[str] = None,
+):
+    """The queue endpoint. Filter by any combination — the common ask is
+    'give me open tasks for assignee X due before EOD'."""
+    query: Dict[str, Any] = {}
+    if client_id:
+        query["client_id"] = client_id
+    if assignee_id:
+        query["assignee_id"] = assignee_id
+    if status:
+        query["status"] = status
+    if due_before:
+        query["due_at"] = {"$lte": due_before}
+    docs = await db.tasks.find(query, {"_id": 0}).sort("due_at", 1).to_list(1000)
+    return docs
+
+
+@api.get("/tasks/{task_id}", response_model=Task)
+async def get_task(task_id: str):
+    doc = await db.tasks.find_one({"id": task_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="task not found")
+    return doc
+
+
+@api.patch("/tasks/{task_id}", response_model=Task)
+async def update_task(task_id: str, payload: TaskUpdate):
+    existing = await db.tasks.find_one({"id": task_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="task not found")
+
+    updates: Dict[str, Any] = {}
+    for field in ("status", "assignee_id", "title", "instructions", "recurrence", "due_at"):
+        value = getattr(payload, field)
+        if value is not None:
+            updates[field] = value
+
+    # Validate assignee if changed
+    if "assignee_id" in updates and updates["assignee_id"]:
+        assignee = await db.workers.find_one({"id": updates["assignee_id"]}, {"_id": 0, "id": 1})
+        if not assignee:
+            raise HTTPException(status_code=404, detail="assignee (worker) not found")
+
+    # Notes: append with timestamp; preserves history without spawning rows
+    if payload.notes_append:
+        stamp = now_iso()
+        prefix = existing.get("notes") or ""
+        updates["notes"] = (prefix + ("\n" if prefix else "") + f"[{stamp}] {payload.notes_append}").strip()
+
+    if not updates:
+        return existing
+
+    await db.tasks.update_one({"id": task_id}, {"$set": updates})
+    doc = await db.tasks.find_one({"id": task_id}, {"_id": 0})
+    return doc
+
+
+@api.post("/tasks/{task_id}/complete", response_model=Task)
+async def complete_task(task_id: str, payload: TaskComplete = TaskComplete()):
+    existing = await db.tasks.find_one({"id": task_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="task not found")
+
+    now = now_iso()
+    updates: Dict[str, Any] = {"last_completed_at": now}
+
+    if existing.get("recurrence", "none") == "none":
+        # Non-recurring: just mark done
+        updates["status"] = "done"
+    else:
+        # Recurring: keep the row open, advance due_at
+        updates["status"] = "open"
+        updates["due_at"] = _advance_due_at(existing.get("due_at"), existing["recurrence"])
+
+    if payload.notes:
+        prefix = existing.get("notes") or ""
+        updates["notes"] = (prefix + ("\n" if prefix else "") + f"[{now}] Completed: {payload.notes}").strip()
+
+    await db.tasks.update_one({"id": task_id}, {"$set": updates})
+    doc = await db.tasks.find_one({"id": task_id}, {"_id": 0})
+    return doc
+
+
+@api.delete("/tasks/{task_id}")
+async def delete_task(task_id: str):
+    result = await db.tasks.delete_one({"id": task_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="task not found")
+    return {"ok": True}
+
+
 # ============ App wiring ============
 
 app.include_router(api)
@@ -1750,3 +1967,5 @@ async def api_key_gate(request, call_next):
 @app.on_event("shutdown")
 async def shutdown_db_client():
     mongo_client.close()
+
+

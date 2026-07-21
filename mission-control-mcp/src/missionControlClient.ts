@@ -215,6 +215,82 @@ class MissionControlClient {
     return this.request('/api/agent/session-start');
   }
 
+  // --- Workers & Tasks -----------------------------------------------------
+
+  listWorkers(activeOnly = true): Promise<Array<Record<string, unknown>>> {
+    const query = activeOnly ? '?active=true' : '';
+    return this.request(`/api/workers${query}`);
+  }
+
+  createWorker(input: {
+    name: string;
+    type: 'human' | 'agent';
+    email?: string;
+  }): Promise<Record<string, unknown>> {
+    return this.request('/api/workers', {
+      method: 'POST',
+      body: JSON.stringify(input)
+    });
+  }
+
+  listTasks(filters: {
+    client_id?: string;
+    assignee_id?: string;
+    status?: 'open' | 'in_progress' | 'done' | 'blocked';
+    due_before?: string;
+  }): Promise<Array<Record<string, unknown>>> {
+    const params = new URLSearchParams();
+    if (filters.client_id) params.set('client_id', filters.client_id);
+    if (filters.assignee_id) params.set('assignee_id', filters.assignee_id);
+    if (filters.status) params.set('status', filters.status);
+    if (filters.due_before) params.set('due_before', filters.due_before);
+    const qs = params.toString();
+    return this.request(`/api/tasks${qs ? `?${qs}` : ''}`);
+  }
+
+  getTask(taskId: string): Promise<Record<string, unknown>> {
+    return this.request(`/api/tasks/${encodeURIComponent(taskId)}`);
+  }
+
+  createTask(input: {
+    client_id: string;
+    title: string;
+    instructions?: string;
+    assignee_id?: string;
+    recurrence?: 'none' | 'daily' | 'weekly';
+    due_at?: string;
+  }): Promise<Record<string, unknown>> {
+    return this.request('/api/tasks', {
+      method: 'POST',
+      body: JSON.stringify(input)
+    });
+  }
+
+  updateTask(
+    taskId: string,
+    input: {
+      status?: 'open' | 'in_progress' | 'done' | 'blocked';
+      assignee_id?: string;
+      title?: string;
+      instructions?: string;
+      recurrence?: 'none' | 'daily' | 'weekly';
+      due_at?: string;
+      notes_append?: string;
+    }
+  ): Promise<Record<string, unknown>> {
+    return this.request(`/api/tasks/${encodeURIComponent(taskId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(input)
+    });
+  }
+
+  completeTask(taskId: string, notes?: string): Promise<Record<string, unknown>> {
+    return this.request(`/api/tasks/${encodeURIComponent(taskId)}/complete`, {
+      method: 'POST',
+      body: JSON.stringify({ notes: notes ?? null })
+    });
+  }
+
   /** Streams the export directly (used by the /downloads proxy route in index.ts). */
   async fetchApprovalExport(
     id: string,

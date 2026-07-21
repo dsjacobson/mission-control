@@ -296,4 +296,158 @@ export function registerMissionControlTools(server: McpServer): void {
       return jsonResult({ url: url.href });
     }
   );
+
+  // --- Workers & Tasks ------------------------------------------------------
+
+  server.registerTool(
+    'list_workers',
+    {
+      title: 'List workers (humans + agents)',
+      description:
+        'Returns the roster of people and agents who can be assigned tasks. Includes id, name, type (human|agent), email, active. The seeded "Claude Cowork" worker (id: "claude-cowork") is always present. Safe to Always allow.',
+      inputSchema: { active_only: z.boolean().optional().describe('Default true; set false to include deactivated workers.') }
+    },
+    async ({ active_only }) => {
+      try {
+        return jsonResult(await missionControl.listWorkers(active_only ?? true));
+      } catch (e) {
+        return errorResult(e);
+      }
+    }
+  );
+
+  server.registerTool(
+    'create_worker',
+    {
+      title: 'Add a worker (human or agent)',
+      description:
+        'Registers a new worker who can be assigned tasks. For humans, include email so future notification digests can reach them. Safe to always allow — worker rows are cheap and reversible.',
+      inputSchema: {
+        name: z.string(),
+        type: z.enum(['human', 'agent']),
+        email: z.string().optional().describe('Required for humans if you want them to receive email digests.')
+      }
+    },
+    async (args) => {
+      try {
+        return jsonResult(await missionControl.createWorker(args));
+      } catch (e) {
+        return errorResult(e);
+      }
+    }
+  );
+
+  server.registerTool(
+    'list_tasks',
+    {
+      title: 'List tasks — the assignee queue',
+      description:
+        'The primary way an assignee finds their work. Filter by any combination of client_id, assignee_id, status, and due_before (ISO datetime). Common queries: get everything due today for a specific assignee, or all in-progress work across a client. Read-only; safe to always allow.',
+      inputSchema: {
+        client_id: z.string().optional(),
+        assignee_id: z.string().optional().describe('Worker id (e.g. "claude-cowork" for yourself).'),
+        status: z.enum(['open', 'in_progress', 'done', 'blocked']).optional(),
+        due_before: z
+          .string()
+          .optional()
+          .describe('ISO datetime. Returns tasks with due_at <= this. Use `new Date().toISOString()` for "due now".')
+      }
+    },
+    async (args) => {
+      try {
+        return jsonResult(await missionControl.listTasks(args));
+      } catch (e) {
+        return errorResult(e);
+      }
+    }
+  );
+
+  server.registerTool(
+    'get_task',
+    {
+      title: 'Get one task',
+      description: 'Fetch full detail (including notes history) for a single task. Read-only.',
+      inputSchema: { task_id: z.string() }
+    },
+    async ({ task_id }) => {
+      try {
+        return jsonResult(await missionControl.getTask(task_id));
+      } catch (e) {
+        return errorResult(e);
+      }
+    }
+  );
+
+  server.registerTool(
+    'create_task',
+    {
+      title: 'Create a task with instructions + optional recurrence',
+      description:
+        'Creates a work item under a client, optionally assigned to a worker and optionally recurring (daily|weekly). For recurring tasks with no due_at set, defaults to "today". Tasks do NOT bypass the approval queue — if the resulting work produces something that would need approval (page edits, published deliverables), that still lands in approvals.',
+      inputSchema: {
+        client_id: z.string(),
+        title: z.string(),
+        instructions: z.string().optional().describe('The brief for whoever picks it up.'),
+        assignee_id: z.string().optional().describe('Worker id from list_workers.'),
+        recurrence: z.enum(['none', 'daily', 'weekly']).optional().describe('Default none.'),
+        due_at: z
+          .string()
+          .optional()
+          .describe('ISO datetime. Optional; recurring tasks default to today if omitted.')
+      }
+    },
+    async (args) => {
+      try {
+        return jsonResult(await missionControl.createTask(args));
+      } catch (e) {
+        return errorResult(e);
+      }
+    }
+  );
+
+  server.registerTool(
+    'update_task',
+    {
+      title: 'Update task status / assignee / notes',
+      description:
+        'For status changes (in_progress, blocked), reassignment, or appending a note. Use complete_task instead for finishing work. notes_append is timestamped and appended to existing notes (never overwrites).',
+      inputSchema: {
+        task_id: z.string(),
+        status: z.enum(['open', 'in_progress', 'done', 'blocked']).optional(),
+        assignee_id: z.string().optional(),
+        title: z.string().optional(),
+        instructions: z.string().optional(),
+        recurrence: z.enum(['none', 'daily', 'weekly']).optional(),
+        due_at: z.string().optional(),
+        notes_append: z.string().optional().describe('Timestamped and appended to task.notes.')
+      }
+    },
+    async ({ task_id, ...rest }) => {
+      try {
+        return jsonResult(await missionControl.updateTask(task_id, rest));
+      } catch (e) {
+        return errorResult(e);
+      }
+    }
+  );
+
+  server.registerTool(
+    'complete_task',
+    {
+      title: 'Mark task complete (advances recurrence)',
+      description:
+        'For non-recurring tasks: sets status="done". For recurring tasks: keeps status="open" and advances due_at by +1 day (daily) or +7 days (weekly), so you don\'t need to create a new row every day. Optional notes are timestamped and appended.',
+      inputSchema: {
+        task_id: z.string(),
+        notes: z.string().optional().describe('Wrap-up note appended to the task.')
+      }
+    },
+    async ({ task_id, notes }) => {
+      try {
+        return jsonResult(await missionControl.completeTask(task_id, notes));
+      } catch (e) {
+        return errorResult(e);
+      }
+    }
+  );
 }

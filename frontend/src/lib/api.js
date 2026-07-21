@@ -148,6 +148,20 @@ export const api = {
   deliverableDocxUrl: (approvalId) => `${API}/approvals/${approvalId}/export/docx`,
   deliverableXlsxUrl: (approvalId) => `${API}/approvals/${approvalId}/export/xlsx`,
 
+  // Workers & Tasks (work queue — separate from approvals)
+  listWorkers: (active = true) =>
+    client.get(`/workers`, { params: active !== undefined ? { active } : {} }).then((r) => r.data),
+  listAssignableTasks: (params = {}) =>
+    client.get(`/tasks`, { params }).then((r) => r.data),
+  createAssignableTask: (payload) =>
+    client.post(`/tasks`, payload).then((r) => r.data),
+  updateAssignableTask: (id, payload) =>
+    client.patch(`/tasks/${id}`, payload).then((r) => r.data),
+  completeAssignableTask: (id, payload = {}) =>
+    client.post(`/tasks/${id}/complete`, payload).then((r) => r.data),
+  deleteAssignableTask: (id) =>
+    client.delete(`/tasks/${id}`).then((r) => r.data),
+
   // Competitor SF bridge crawl
   competitorSfBridgeCrawl: (clientId, competitorId, max_urls = 200) =>
     client.post(`/clients/${clientId}/competitors/${competitorId}/sf-bridge/crawl`, { max_urls }).then((r) => r.data),

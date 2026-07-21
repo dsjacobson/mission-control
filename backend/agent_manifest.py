@@ -95,6 +95,32 @@ def build_manifest(backend_base_url: str = "") -> Dict[str, Any]:
                     "wordpress_draft": "Reference — content draft for WP push.",
                 },
             },
+            "worker": {
+                "description": "A person or agent who can be assigned tasks. type=agent for Claude Cowork, "
+                               "type=human for the operator or hired help. Seeded row: id='claude-cowork'.",
+                "endpoints": {
+                    "list": "GET /api/workers?active=true",
+                    "create": "POST /api/workers  body: {name, type: 'human'|'agent', email?}",
+                    "update": "PATCH /api/workers/{worker_id}  body: {name?, type?, email?}",
+                },
+            },
+            "task": {
+                "description": "A work item with instructions, an assignee, and optionally a recurrence. "
+                               "This is HOW work gets picked up — completing a task that produces mutating "
+                               "output still requires the resulting change to go through the approval queue. "
+                               "Tasks do NOT bypass approvals.",
+                "endpoints": {
+                    "list": "GET /api/tasks?client_id={id}&assignee_id={id}&status={open|in_progress|done|blocked}&due_before={iso}",
+                    "get": "GET /api/tasks/{task_id}",
+                    "create": "POST /api/tasks  body: {client_id, title, instructions, assignee_id?, recurrence?: 'none'|'daily'|'weekly', due_at?}",
+                    "update": "PATCH /api/tasks/{task_id}  body: {status?, assignee_id?, title?, instructions?, recurrence?, due_at?, notes_append?}",
+                    "complete": "POST /api/tasks/{task_id}/complete  body: {notes?} — for recurring tasks, advances due_at",
+                    "delete": "DELETE /api/tasks/{task_id}",
+                },
+                "status_flow": "open → in_progress → done (or blocked). Recurring tasks stay open after complete.",
+                "hint": "For a session-start snapshot of what's due today for a specific assignee, call "
+                        "GET /api/tasks?assignee_id={id}&status=open&due_before={now}.",
+            },
         },
         "workflows": {
             "monthly_competitive_analysis": {

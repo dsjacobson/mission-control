@@ -178,3 +178,67 @@ class ApprovalDecision(BaseModel):
 class ProgressUpdate(BaseModel):
     progress: ApprovalProgress
     note: Optional[str] = ""
+
+
+
+# ---------- Workers & Tasks ----------
+
+WorkerType = Literal["human", "agent"]
+TaskStatus = Literal["open", "in_progress", "done", "blocked"]
+TaskRecurrence = Literal["none", "daily", "weekly"]
+
+
+class Worker(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    id: str = Field(default_factory=new_id)
+    name: str
+    type: WorkerType = "human"
+    email: Optional[str] = None
+    active: bool = True
+    created_at: str = Field(default_factory=now_iso)
+
+
+class WorkerCreate(BaseModel):
+    name: str
+    type: WorkerType = "human"
+    email: Optional[str] = None
+
+
+class Task(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    id: str = Field(default_factory=new_id)
+    client_id: str
+    title: str
+    instructions: str = ""
+    assignee_id: Optional[str] = None
+    status: TaskStatus = "open"
+    recurrence: TaskRecurrence = "none"
+    due_at: Optional[str] = None  # ISO datetime; nullable
+    last_completed_at: Optional[str] = None
+    notes: str = ""  # freeform, appended to on status changes
+    created_at: str = Field(default_factory=now_iso)
+
+
+class TaskCreate(BaseModel):
+    client_id: str
+    title: str
+    instructions: str = ""
+    assignee_id: Optional[str] = None
+    recurrence: TaskRecurrence = "none"
+    due_at: Optional[str] = None
+
+
+class TaskUpdate(BaseModel):
+    status: Optional[TaskStatus] = None
+    assignee_id: Optional[str] = None
+    title: Optional[str] = None
+    instructions: Optional[str] = None
+    recurrence: Optional[TaskRecurrence] = None
+    due_at: Optional[str] = None
+    notes_append: Optional[str] = None  # appended to existing notes with a timestamp
+
+
+class TaskComplete(BaseModel):
+    notes: Optional[str] = None
