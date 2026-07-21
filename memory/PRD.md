@@ -334,3 +334,43 @@ only), Screaming Frog MCP.
 - `EMERGENT_LLM_KEY` lives in `/app/backend/.env`.
 - Frontend backend URL: `REACT_APP_BACKEND_URL` (do not hardcode).
 - Restart on env change: `sudo supervisorctl restart backend`.
+
+## Changelog
+
+### 2026-02 · Tasks & Assignees (Option B: Backend + MCP + Minimal UI)
+- **Backend** (`/app/backend/server.py` L1720-1915, `/app/backend/models.py`):
+  - New collections `workers` and `tasks`
+  - `Worker` (id, name, type=agent|human, email?, active, created_at)
+  - `Task` (id, client_id, assignee_id?, title, instructions, status=open|in_progress|done|blocked, recurrence=none|daily|weekly, due_at?, last_completed_at?, notes)
+  - Startup seed: idempotent `Claude Cowork` worker (id=`claude-cowork`, type=agent)
+  - Endpoints: `GET/POST /api/workers`, `PATCH /api/workers/{id}`, full `GET/POST/PATCH/DELETE /api/tasks/*` + `POST /api/tasks/{id}/complete`
+  - `_advance_due_at` uses `today + delta` (catches up overdue recurring tasks)
+- **Frontend** (`/app/frontend/src/pages/Tasks.jsx`, sidebar link, `/app/frontend/src/lib/api.js`):
+  - `/tasks` route — filters (Status, Assignee), grouped sections (Due now, Upcoming, Recently completed)
+  - New task dialog with recurrence + due date + Claude Cowork assignee default
+  - Bug fix during this pass: Tasks.jsx originally used raw `api.get/post/patch/delete` — replaced with proper `listWorkers`, `listAssignableTasks`, `createAssignableTask`, `updateAssignableTask`, `completeAssignableTask`, `deleteAssignableTask` helpers
+- **MCP** (`/app/mission-control-mcp/src/mcp/tools.ts`): 7 new tools for the Cowork agent
+- **Tests**: `/app/backend/tests/test_tasks_workers.py` (11 pytest cases, all pass)
+- **Verified**: testing agent iteration_5.json — backend 100%, frontend 100%
+- **Deferred**: email notifications (Resend) until real human is onboarded
+
+## Prioritized Backlog
+
+### P0 (next up)
+- "Plan from this keyword" action in Keyword Map — convert map rows into `technical_action` approvals
+- Bulk plan sprint from N priority keywords — one-click weekly sprint action
+
+### P1
+- Strategy Synthesis workflow (`optimization_strategy` run type) — consume Keyword Map + SERP snapshots + SF audit + Competitor data into a 30-day roadmap
+- Update existing Technical Audit + Strategy Sprint workflows to consume the new `keyword_map` data
+
+### P2
+- WordPress draft publisher (approved briefs → WP REST)
+- Cannibalization auto-resolver
+- Dynasty Deal Finder MCP connector (blocked — needs AGENT_API_KEY + backend confirmation from user)
+
+### Nice-to-haves surfaced by testing agent
+- Extract `/api/tasks` + `/api/workers` from `server.py` (~1970 LOC) into `/app/backend/routers/tasks.py`
+- Add `min_length=1` on `TaskCreate.title` (defense in depth; UI already blocks empties)
+- Replace `window.confirm` in Tasks.jsx delete with shadcn `AlertDialog`
+- Suppress benign `ResizeObserver loop completed…` dev overlay from Radix Select
