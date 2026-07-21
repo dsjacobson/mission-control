@@ -337,6 +337,28 @@ only), Screaming Frog MCP.
 
 ## Changelog
 
+### 2026-02 · seo-toolkit-mcp made manifest-driven
+- Replaced hardcoded `server.registerTool()` list (was 11 tools, out of sync with
+  the SEO Toolkit's live 19-tool catalog) with a live manifest fetch from
+  `GET {SEO_TOOLKIT_API_BASE_URL}/api/agent/manifest?format=mcp`
+- Switched from `McpServer` (Zod-shape API) → low-level `Server`
+  (`@modelcontextprotocol/sdk/server/index.js`) so JSON Schema from the manifest
+  passes through untouched (`ListToolsRequestSchema`, `CallToolRequestSchema`)
+- New `/app/seo-toolkit-mcp/src/manifest.ts` — 5-minute in-process cache with
+  stale-if-error fallback, path-param substitution (`/{name}` → args), generic
+  dispatch (GET → query string, POST/PUT/PATCH → JSON body), always sends
+  `X-API-Key`. Missing tool → one force-refresh retry before giving up.
+- Deleted `/app/seo-toolkit-mcp/src/mcp/tools.ts` and
+  `/app/seo-toolkit-mcp/src/seoToolkitClient.ts` (no longer needed)
+- OAuth, consent page, transport wiring, env vars, and `mission-control-mcp/`
+  all untouched
+- Verified against live production toolkit: 19/19 tools listed by name,
+  path-param GET (`get_job_status`) + no-arg GET (`session_start`) + POST body
+  (`recipe_advance`) all reach the toolkit at the correct URL (401 responses on
+  fake key prove dispatch shape is right)
+- **Result**: adding a tool on the toolkit side now appears in Claude
+  automatically after a Claude restart, with zero connector code changes
+
 ### 2026-02 · Tasks & Assignees (Option B: Backend + MCP + Minimal UI)
 - **Backend** (`/app/backend/server.py` L1720-1915, `/app/backend/models.py`):
   - New collections `workers` and `tasks`
