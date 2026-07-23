@@ -42,18 +42,27 @@ export function createMissionControlMcpServer(): Server {
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-    const tools = await getManifestTools();
+    let manifestTools: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }> = [];
+    try {
+      const tools = await getManifestTools();
+      manifestTools = tools.map((t) => ({
+        name: t.name,
+        description: t.description ?? '',
+        inputSchema: (t.inputSchema as { type?: string } | undefined)?.type
+          ? (t.inputSchema as Record<string, unknown>)
+          : { type: 'object', properties: {}, required: [] }
+      }));
+    } catch (err) {
+      // Don't kill the whole tool list on a manifest failure — Claude would see
+      // zero tools and appear "disconnected". Log it, then serve just the local
+      // tool so the user has something to work with while the backend recovers.
+      console.error(
+        '[tools/list] manifest fetch failed, serving local tools only:',
+        err instanceof Error ? err.message : err
+      );
+    }
     return {
-      tools: [
-        ...tools.map((t) => ({
-          name: t.name,
-          description: t.description ?? '',
-          inputSchema: (t.inputSchema as { type?: string } | undefined)?.type
-            ? (t.inputSchema as Record<string, unknown>)
-            : { type: 'object', properties: {}, required: [] }
-        })),
-        localExportTool
-      ]
+      tools: [...manifestTools, localExportTool]
     };
   });
 

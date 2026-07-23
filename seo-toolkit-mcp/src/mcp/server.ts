@@ -24,16 +24,27 @@ export function createSeoToolkitMcpServer(): Server {
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-    const tools = await getManifestTools();
-    return {
-      tools: tools.map((t) => ({
-        name: t.name,
-        description: t.description ?? '',
-        inputSchema: (t.inputSchema as { type?: string } | undefined)?.type
-          ? (t.inputSchema as Record<string, unknown>)
-          : { type: 'object', properties: {}, required: [] }
-      }))
-    };
+    try {
+      const tools = await getManifestTools();
+      return {
+        tools: tools.map((t) => ({
+          name: t.name,
+          description: t.description ?? '',
+          inputSchema: (t.inputSchema as { type?: string } | undefined)?.type
+            ? (t.inputSchema as Record<string, unknown>)
+            : { type: 'object', properties: {}, required: [] }
+        }))
+      };
+    } catch (err) {
+      // Don't kill the whole tool list on a manifest failure — Claude would see
+      // zero tools and appear "disconnected". Log and return empty; the user
+      // will see the connector is connected but empty, and can retry.
+      console.error(
+        '[tools/list] manifest fetch failed, returning empty tool list:',
+        err instanceof Error ? err.message : err
+      );
+      return { tools: [] };
+    }
   });
 
   server.setRequestHandler(CallToolRequestSchema, async (req) => {
