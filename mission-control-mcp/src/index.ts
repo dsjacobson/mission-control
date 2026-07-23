@@ -12,6 +12,7 @@ import { MissionControlOAuthProvider } from './auth/provider.js';
 import { oauthStore } from './auth/store.js';
 import { renderLoginPage } from './auth/loginPage.js';
 import { createMissionControlMcpServer } from './mcp/server.js';
+import { getManifestTools } from './manifest.js';
 
 const app = express();
 // Render (and most PaaS) put us behind a reverse proxy that sets X-Forwarded-*.
@@ -185,6 +186,27 @@ app.get('/downloads/:id/:format', requireAuth, async (req, res) => {
 
 app.get('/health', (_req, res) => {
   res.json({ ok: true });
+});
+
+// Non-sensitive diagnostic. Confirms which backend the connector is pointed at
+// and whether it can currently fetch the tool manifest. Useful when Claude
+// reports "connected but no tools" — you can hit this URL directly (no OAuth)
+// to see what the connector sees. No secrets are exposed.
+app.get('/debug/manifest', async (_req, res) => {
+  const info: Record<string, unknown> = {
+    backend_base_url: config.missionControl.baseUrl,
+    manifest_url: new URL('/api/agent/manifest?format=mcp', config.missionControl.baseUrl).href
+  };
+  try {
+    const tools = await getManifestTools();
+    info.status = 'ok';
+    info.tool_count = tools.length;
+    info.tool_names = tools.map((t) => t.name);
+  } catch (err) {
+    info.status = 'error';
+    info.error = err instanceof Error ? err.message : String(err);
+  }
+  res.json(info);
 });
 
 app.listen(config.port, () => {

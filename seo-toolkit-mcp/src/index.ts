@@ -11,6 +11,7 @@ import { SeoToolkitOAuthProvider } from './auth/provider.js';
 import { oauthStore } from './auth/store.js';
 import { renderLoginPage } from './auth/loginPage.js';
 import { createSeoToolkitMcpServer } from './mcp/server.js';
+import { getManifestTools } from './manifest.js';
 
 const app = express();
 // Render (and most PaaS) put us behind a reverse proxy that sets X-Forwarded-*.
@@ -150,6 +151,25 @@ app.delete('/mcp', requireAuth, (_req, res) => {
 
 app.get('/health', (_req, res) => {
   res.json({ ok: true });
+});
+
+// Non-sensitive diagnostic. Confirms which backend the connector is pointed at
+// and whether it can currently fetch the tool manifest. No secrets exposed.
+app.get('/debug/manifest', async (_req, res) => {
+  const info: Record<string, unknown> = {
+    backend_base_url: config.seoToolkit.baseUrl,
+    manifest_url: new URL('/api/agent/manifest?format=mcp', config.seoToolkit.baseUrl).href
+  };
+  try {
+    const tools = await getManifestTools();
+    info.status = 'ok';
+    info.tool_count = tools.length;
+    info.tool_names = tools.map((t) => t.name);
+  } catch (err) {
+    info.status = 'error';
+    info.error = err instanceof Error ? err.message : String(err);
+  }
+  res.json(info);
 });
 
 app.listen(config.port, () => {
