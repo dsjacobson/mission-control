@@ -12,7 +12,6 @@ import { MissionControlOAuthProvider } from './auth/provider.js';
 import { oauthStore } from './auth/store.js';
 import { renderLoginPage } from './auth/loginPage.js';
 import { createMissionControlMcpServer } from './mcp/server.js';
-import { missionControl } from './missionControlClient.js';
 
 const app = express();
 // Render (and most PaaS) put us behind a reverse proxy that sets X-Forwarded-*.
@@ -160,14 +159,25 @@ app.get('/downloads/:id/:format', requireAuth, async (req, res) => {
     return;
   }
   try {
-    const { body, contentType } = await missionControl.fetchApprovalExport(id, format);
+    const url = new URL(
+      `/api/approvals/${encodeURIComponent(id)}/export/${format}`,
+      config.missionControl.baseUrl
+    );
+    const upstream = await fetch(url, {
+      headers: { 'X-API-Key': config.missionControl.apiKey }
+    });
+    if (!upstream.ok) {
+      res.status(502).send(`Mission Control API ${upstream.status} exporting approval ${id} as ${format}`);
+      return;
+    }
+    const contentType = upstream.headers.get('content-type');
     if (contentType) res.setHeader('Content-Type', contentType);
     res.setHeader('Content-Disposition', `attachment; filename="${id}.${format}"`);
-    if (!body) {
+    if (!upstream.body) {
       res.status(502).send('Mission Control returned no file content.');
       return;
     }
-    Readable.fromWeb(body as never).pipe(res);
+    Readable.fromWeb(upstream.body as never).pipe(res);
   } catch (error) {
     res.status(502).send(error instanceof Error ? error.message : String(error));
   }

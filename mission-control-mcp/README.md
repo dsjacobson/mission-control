@@ -42,9 +42,19 @@ than one instance.
 
 ## The API this talks to
 
-`src/missionControlClient.ts` is written against the real Mission Control API, as
-documented by its own `GET /api/agent/manifest` (public, no key needed, worth re-reading
-if the API ever changes). Auth is a single header: `X-API-Key: <MISSION_CONTROL_API_KEY>`.
+**Manifest-driven.** This connector no longer hardcodes a tool list. On every
+`tools/list` request it fetches the live tool catalog from Mission Control at:
+
+```
+GET {MISSION_CONTROL_API_BASE_URL}/api/agent/manifest?format=mcp
+```
+
+That catalog is defined in one place — `backend/agent_manifest.py::build_mcp_manifest()` —
+so adding a tool there makes it visible in Claude Desktop after the next
+connector restart, with **zero connector code changes**.
+
+Auth is a single header: `X-API-Key: <MISSION_CONTROL_API_KEY>`, attached
+automatically by the generic dispatcher (see `src/manifest.ts`).
 
 Key things the manifest calls out that shaped the tool design:
 
@@ -58,13 +68,14 @@ Key things the manifest calls out that shaped the tool design:
   and kicks off the deliverable in one call. Use it instead of composing
   `launch_workflow` with `type: competitor_analysis` by hand.
 - **Cost awareness.** Semrush and DataForSEO calls cost real money. Don't run
-  `run_competitive_analysis` for the same client more than once a day.
+  `run_competitive_analysis` for the same client more than once a day. Billed tools
+  get a `[BILLED — get approval]` prefix on their description.
 - **Some flows can't be scripted at all**: Google OAuth for Search Console/Analytics,
   the Screaming Frog local bridge, and first-time Semrush MCP key entry all need an
   interactive browser session. This connector doesn't attempt them.
 
-Full endpoint reference, including request/response shapes: `GET /openapi.json` on the
-same domain, or `/docs` for interactive Swagger UI.
+Full endpoint reference: `GET /openapi.json` on the same domain, or `/docs` for
+interactive Swagger UI.
 
 ## Local setup
 
@@ -114,23 +125,31 @@ wherever it actually ends up.
 
 ## Tools this exposes
 
-Read (safe to set to **Always allow**):
-- `session_start` — one-shot orientation: integrations health, per-client workload, recent runs
-- `list_clients`, `get_client` — client workspaces
-- `list_runs`, `get_run` — workflow run status
-- `list_approvals` — the approval queue
+Whatever Mission Control publishes at `/api/agent/manifest?format=mcp` (20
+tools today: `session_start`, `list_clients`, `get_client`, `list_runs`,
+`get_run`, `list_approvals`, `create_client`, `add_competitor`,
+`run_competitive_analysis`, `launch_workflow`, `decide_approval`,
+`bulk_decide_approvals`, `archive_decided_approvals`, `list_workers`,
+`create_worker`, `list_tasks`, `get_task`, `create_task`, `update_task`,
+`complete_task`) — **plus** one connector-local tool:
 
-Write (leave on **Ask every time** until you trust the flow):
-- `create_client`, `add_competitor`
-- `run_competitive_analysis`, `launch_workflow`
-- `decide_approval`, `bulk_decide_approvals` — the two that matter most: approving a
-  `technical_action` or `page_optimization` item auto-executes it on the live page
-- `archive_decided_approvals`
-- `get_approval_export_link` — hands back a `/downloads/{id}/{format}` link on this
-  server (proxied, so your Mission Control key never leaves this process)
+- `get_approval_export_link` — returns a link to download an approved item as
+  `.docx` or `.xlsx`. The link points at this connector's `/downloads/{id}/{format}`
+  proxy so your Mission Control API key never leaves this process. This one
+  stays hardcoded because it needs *this connector's* PUBLIC_URL, not Mission
+  Control's.
+
+Billed tools (currently `run_competitive_analysis`, `launch_workflow`) have
+a `[BILLED — get approval]` prefix on their description so Claude's permission
+UI can be tuned accordingly (Always allow the read tools, Ask every time on
+billed).
 
 ## Extending this
 
-To add a new tool, add a method to `missionControlClient.ts` (or wire it to whatever the
-real endpoint ends up being) and register a matching tool in `src/mcp/tools.ts`. Nothing
-in the auth layer needs to change.
+**To add a new tool**: add it to `backend/agent_manifest.py::build_mcp_manifest()`
+on the Mission Control side, matching an existing REST endpoint. Restart Claude
+Desktop and it appears automatically — no changes here.
+
+**To add a connector-local tool** (something that needs `PUBLIC_URL` or other
+connector state): register it in `src/mcp/server.ts` next to the existing
+`get_approval_export_link` handler.

@@ -90,13 +90,19 @@ async def health():
 
 
 @api.get("/agent/manifest")
-async def agent_manifest_endpoint():
+async def agent_manifest_endpoint(format: Optional[str] = None):
     """Operator's guide for autonomous agents (Claude Cowork / Claude Computer Use).
 
-    Fetch this ONCE at session start; it describes every resource, high-level
-    workflow, and safety rule. For exact endpoint schemas, see /api/openapi.json.
+    Default: rich operator's guide (resources, workflows, examples).
+    `?format=mcp`: flat tool catalog consumed by `mission-control-mcp` — same
+    shape the SEO Toolkit exposes, so the connector is manifest-driven and any
+    tool added in agent_manifest.build_mcp_manifest() shows up in Claude
+    automatically after a connector restart.
+
     Exempt from the API-key gate so agents can discover before authenticating.
     """
+    if (format or "").lower() == "mcp":
+        return agent_manifest.build_mcp_manifest()
     base = os.environ.get("REACT_APP_BACKEND_URL", "").strip()
     return agent_manifest.build_manifest(backend_base_url=base)
 

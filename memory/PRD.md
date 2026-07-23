@@ -337,6 +337,33 @@ only), Screaming Frog MCP.
 
 ## Changelog
 
+### 2026-02 · mission-control-mcp made manifest-driven (matched to seo-toolkit-mcp)
+- Extended `backend/agent_manifest.py` with `build_mcp_manifest()` — enumerates
+  all 20 REST tools (session_start, list/get clients & runs & approvals & workers
+  & tasks, create/update/complete_task, launch_workflow, run_competitive_analysis,
+  decide/bulk_decide_approvals, archive_decided_approvals, create_client,
+  add_competitor, create_worker) in the exact same shape as the SEO Toolkit
+  (`{name, description, inputSchema, x_endpoint, x_cost}`)
+- `GET /api/agent/manifest?format=mcp` now returns this flat tool catalog; the
+  default (no query) still returns the rich operator's guide (backwards compat)
+- `/app/mission-control-mcp/src/manifest.ts` — same 5-min cache + stale-if-error
+  + path-param substitution + generic dispatch (GET → query, POST/PATCH → body,
+  X-API-Key attached) as the SEO Toolkit variant
+- `/app/mission-control-mcp/src/mcp/server.ts` — low-level `Server` with a
+  synthetic `get_approval_export_link` tool appended locally (that one needs
+  the connector's own PUBLIC_URL, so it can't be manifest-driven)
+- `index.ts` — inlined the `/downloads/:id/:format` proxy fetch, dropped the
+  `missionControlClient.ts` dependency
+- Deleted `/app/mission-control-mcp/src/mcp/tools.ts` and `missionControlClient.ts`
+- **End-to-end verified against local Mission Control**:
+  20/20 tools returned by manifest, session_start GET → 200, list_clients GET →
+  3 clients, get_client with `{client_id}` path substitution → 200, list_workers
+  with `active=true` query → 200, create/update/complete_task full lifecycle
+  through the dispatcher → 200/200/200 (status transitions confirmed). Backend
+  regression tests still pass (11/11)
+- **Result**: adding a Mission Control REST tool now only requires appending it
+  to `build_mcp_manifest()` — no connector code change, no redeploy
+
 ### 2026-02 · seo-toolkit-mcp made manifest-driven
 - Replaced hardcoded `server.registerTool()` list (was 11 tools, out of sync with
   the SEO Toolkit's live 19-tool catalog) with a live manifest fetch from

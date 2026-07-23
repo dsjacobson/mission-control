@@ -193,3 +193,273 @@ def build_manifest(backend_base_url: str = "") -> Dict[str, Any]:
             "description": "One-shot orientation call: integrations health, per-client pending-approval counts, active runs, and last-run summaries. Call once right after reading this manifest to skip 3-4 exploratory API calls.",
         },
     }
+
+
+
+# ============================================================================
+# MCP-format manifest — a flat list of tools with JSON Schema + x_endpoint
+# metadata, mirroring the shape the SEO Toolkit publishes. Consumed by
+# `mission-control-mcp` so adding a tool here immediately makes it visible in
+# Claude Desktop after a connector restart, with zero connector code changes.
+# ============================================================================
+#
+# Shape (per tool):
+#   {
+#     "name": "list_clients",
+#     "description": "...",
+#     "inputSchema": { "type": "object", "properties": {...}, "required": [] },
+#     "x_endpoint": { "method": "GET", "path": "/api/clients" },
+#     "x_cost": "free"   # or "billed"
+#   }
+#
+# Path params use `{name}` syntax. The connector's dispatcher substitutes them
+# from the tool args, then sends any remaining args as query string (GET) or
+# JSON body (POST/PATCH/PUT). `x_cost: "billed"` prefixes the description with
+# "[BILLED — get approval]" for the Claude Desktop permission UI.
+
+
+def _tool(
+    name: str,
+    description: str,
+    method: str,
+    path: str,
+    properties: Dict[str, Any] | None = None,
+    required: list[str] | None = None,
+    cost: str = "free",
+) -> Dict[str, Any]:
+    """Build a single MCP tool spec. Keeps the manifest below terse and readable."""
+    desc = ("[BILLED — get approval] " + description) if cost == "billed" else description
+    return {
+        "name": name,
+        "description": desc,
+        "inputSchema": {
+            "type": "object",
+            "properties": properties or {},
+            "required": required or [],
+        },
+        "x_endpoint": {"method": method.upper(), "path": path},
+        "x_cost": cost,
+    }
+
+
+# ---- Reusable schema fragments -----------------------------------------------
+_S_STR = {"type": "string"}
+_S_STR_OPT = {"type": "string", "description": "Optional."}
+_S_BOOL_OPT = {"type": "boolean", "description": "Optional."}
+
+
+def build_mcp_manifest() -> Dict[str, Any]:
+    """List every REST endpoint the mission-control-mcp connector should expose
+    as an MCP tool. Order here is the order Claude sees them."""
+    tools = [
+        # --- Orientation --------------------------------------------------
+        _tool(
+            "session_start",
+            "One-shot orientation snapshot: integrations health, per-client workload (pending approvals, active runs, last run), and 10 most recent runs across all clients. Call once at session start to skip several exploratory list_* calls. Safe to Always allow.",
+            "GET", "/api/agent/session-start",
+        ),
+
+        # --- Clients (read) ----------------------------------------------
+        _tool(
+            "list_clients",
+            "List every client workspace in Mission Control. Read-only.",
+            "GET", "/api/clients",
+        ),
+        _tool(
+            "get_client",
+            "Get one client, including its competitors and current keyword map. Read-only.",
+            "GET", "/api/clients/{client_id}",
+            properties={"client_id": {**_S_STR, "description": "Client UUID."}},
+            required=["client_id"],
+        ),
+
+        # --- Workflow runs (read) ----------------------------------------
+        _tool(
+            "list_runs",
+            "List workflow runs, optionally filtered by client. A completed run can still have approvals_pending > 0 — treat those as awaiting review, not done.",
+            "GET", "/api/runs",
+            properties={"client_id": _S_STR_OPT},
+        ),
+        _tool(
+            "get_run",
+            "Get the status and result of a single workflow run.",
+            "GET", "/api/runs/{run_id}",
+            properties={"run_id": _S_STR},
+            required=["run_id"],
+        ),
+
+        # --- Approvals (read) --------------------------------------------
+        _tool(
+            "list_approvals",
+            "List items in the approval queue. Defaults to pending. 'technical_action' and 'page_optimization' are executable kinds — approving them auto-runs the fix. Everything else is a reference document.",
+            "GET", "/api/approvals",
+            properties={
+                "client_id": _S_STR_OPT,
+                "status": {"type": "string", "enum": ["pending", "approved", "rejected"], "description": "Default 'pending'."},
+            },
+        ),
+
+        # --- Clients (write) ---------------------------------------------
+        _tool(
+            "create_client",
+            "Add a new client workspace to Mission Control.",
+            "POST", "/api/clients",
+            properties={
+                "name": _S_STR,
+                "domain": _S_STR,
+                "industry": _S_STR_OPT,
+                "goals": _S_STR_OPT,
+                "target_markets": {"type": "array", "items": {"type": "string"}, "description": "Optional."},
+            },
+            required=["name", "domain"],
+        ),
+        _tool(
+            "add_competitor",
+            "Add a competitor to a client's competitor list.",
+            "POST", "/api/clients/{client_id}/competitors",
+            properties={
+                "client_id": _S_STR,
+                "name": _S_STR,
+                "domain": _S_STR,
+            },
+            required=["client_id", "name", "domain"],
+        ),
+
+        # --- Workflows (write) -------------------------------------------
+        _tool(
+            "run_competitive_analysis",
+            "The recommended one-click path for competitive analysis: refreshes Semrush metrics for the client and its competitors, then produces a competitive_deliverable approval. Prefer this over launch_workflow for competitor_analysis. Semrush calls cost real money — do not run this more than once a day per client.",
+            "POST", "/api/clients/{client_id}/competitive-analysis",
+            properties={"client_id": _S_STR},
+            required=["client_id"],
+            cost="billed",
+        ),
+        _tool(
+            "launch_workflow",
+            "Launch a workflow run for a client: keyword_research, technical_audit, strategy_sprint, or competitive_deliverable. For competitor_analysis specifically, use run_competitive_analysis instead — it is the endpoint Mission Control recommends.",
+            "POST", "/api/runs",
+            properties={
+                "client_id": _S_STR,
+                "type": {"type": "string", "enum": [
+                    "keyword_research", "technical_audit", "competitor_analysis",
+                    "strategy_sprint", "competitive_deliverable",
+                ]},
+                "config": {"type": "object", "description": "Optional workflow-specific config."},
+            },
+            required=["client_id", "type"],
+            cost="billed",
+        ),
+
+        # --- Approvals (write) -------------------------------------------
+        _tool(
+            "decide_approval",
+            "Decide a single approval item. Approving 'technical_action' or 'page_optimization' auto-executes the fix on the live page — everything else just files the document. Never approve an executable kind unless the user has explicitly said to for this item, or given a standing rule that covers it. When unsure, leave it pending and summarize it instead.",
+            "POST", "/api/approvals/{id}/decision",
+            properties={
+                "id": {**_S_STR, "description": "Approval item id."},
+                "status": {"type": "string", "enum": ["approved", "rejected"]},
+                "note": _S_STR_OPT,
+                "edited_content": {**_S_STR_OPT, "description": "Optional replacement content applied before approving."},
+            },
+            required=["id", "status"],
+        ),
+        _tool(
+            "bulk_decide_approvals",
+            "Batch decide_approval. Same executable-kind caution applies — do not use this to bulk-approve technical_action or page_optimization items without explicit user sign-off on that batch.",
+            "POST", "/api/approvals/bulk-decision",
+            properties={
+                "ids": {"type": "array", "items": {"type": "string"}},
+                "status": {"type": "string", "enum": ["approved", "rejected"]},
+                "note": _S_STR_OPT,
+            },
+            required=["ids", "status"],
+        ),
+        _tool(
+            "archive_decided_approvals",
+            "Archive all already-decided (approved or rejected) approvals for a client, tidying the queue.",
+            "POST", "/api/clients/{client_id}/approvals/archive-decided",
+            properties={"client_id": _S_STR},
+            required=["client_id"],
+        ),
+
+        # --- Workers -----------------------------------------------------
+        _tool(
+            "list_workers",
+            "Roster of people and agents who can be assigned tasks (id, name, type=human|agent, email, active). The seeded 'Claude Cowork' worker (id: 'claude-cowork') is always present. Safe to Always allow.",
+            "GET", "/api/workers",
+            properties={"active": {**_S_BOOL_OPT, "description": "Default true; false includes deactivated workers."}},
+        ),
+        _tool(
+            "create_worker",
+            "Register a new worker (human or agent). For humans, include email so future notification digests can reach them.",
+            "POST", "/api/workers",
+            properties={
+                "name": _S_STR,
+                "type": {"type": "string", "enum": ["human", "agent"]},
+                "email": _S_STR_OPT,
+            },
+            required=["name", "type"],
+        ),
+
+        # --- Tasks -------------------------------------------------------
+        _tool(
+            "list_tasks",
+            "The primary way an assignee finds their work. Filter by any combination of client_id, assignee_id, status, and due_before (ISO datetime). Common query: get everything open for a specific assignee due by end-of-day. Safe to Always allow.",
+            "GET", "/api/tasks",
+            properties={
+                "client_id": _S_STR_OPT,
+                "assignee_id": {**_S_STR_OPT, "description": "Worker id (e.g. 'claude-cowork' for yourself)."},
+                "status": {"type": "string", "enum": ["open", "in_progress", "done", "blocked"], "description": "Optional."},
+                "due_before": {**_S_STR_OPT, "description": "ISO datetime. Returns tasks with due_at <= this."},
+            },
+        ),
+        _tool(
+            "get_task",
+            "Fetch full detail (including notes history) for a single task.",
+            "GET", "/api/tasks/{task_id}",
+            properties={"task_id": _S_STR},
+            required=["task_id"],
+        ),
+        _tool(
+            "create_task",
+            "Create a work item under a client, optionally assigned to a worker and optionally recurring (daily|weekly). Recurring tasks with no due_at default to today. Tasks do NOT bypass the approval queue — if the resulting work produces something that would need approval, that still lands in approvals.",
+            "POST", "/api/tasks",
+            properties={
+                "client_id": _S_STR,
+                "title": _S_STR,
+                "instructions": _S_STR_OPT,
+                "assignee_id": {**_S_STR_OPT, "description": "Worker id from list_workers."},
+                "recurrence": {"type": "string", "enum": ["none", "daily", "weekly"], "description": "Default 'none'."},
+                "due_at": {**_S_STR_OPT, "description": "ISO datetime. Recurring tasks default to today if omitted."},
+            },
+            required=["client_id", "title"],
+        ),
+        _tool(
+            "update_task",
+            "Update status / assignee / notes. Use complete_task instead for finishing work. notes_append is timestamped and appended to existing notes (never overwrites).",
+            "PATCH", "/api/tasks/{task_id}",
+            properties={
+                "task_id": _S_STR,
+                "status": {"type": "string", "enum": ["open", "in_progress", "done", "blocked"], "description": "Optional."},
+                "assignee_id": _S_STR_OPT,
+                "title": _S_STR_OPT,
+                "instructions": _S_STR_OPT,
+                "recurrence": {"type": "string", "enum": ["none", "daily", "weekly"], "description": "Optional."},
+                "due_at": _S_STR_OPT,
+                "notes_append": {**_S_STR_OPT, "description": "Timestamped + appended to task.notes."},
+            },
+            required=["task_id"],
+        ),
+        _tool(
+            "complete_task",
+            "Mark task complete. Non-recurring: sets status='done'. Recurring: keeps status='open' and advances due_at by +1 day (daily) or +7 days (weekly). Optional notes are timestamped and appended.",
+            "POST", "/api/tasks/{task_id}/complete",
+            properties={
+                "task_id": _S_STR,
+                "notes": {**_S_STR_OPT, "description": "Wrap-up note appended to the task."},
+            },
+            required=["task_id"],
+        ),
+    ]
+
+    return {"tools": tools}
